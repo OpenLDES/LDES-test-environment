@@ -1,0 +1,71 @@
+name: Pull request test environment cleanup
+
+# Destroys the test environment of a pull request when it is closed. The deploy workflow already
+# tears its environment down at the end of every run, so this normally only has work to do for
+# pull requests carrying the `keep-environment` label or for runs that were interrupted.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ldes-environment-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  OVH_ENDPOINT: ${{ vars.OVH_ENDPOINT }}
+  OVH_APPLICATION_KEY: ${{ secrets.OVH_APPLICATION_KEY }}
+  OVH_APPLICATION_SECRET: ${{ secrets.OVH_APPLICATION_SECRET }}
+  OVH_CONSUMER_KEY: ${{ secrets.OVH_CONSUMER_KEY }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_KEY }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
+  TF_STATE_ENDPOINT: ${{ vars.TF_STATE_ENDPOINT }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: '0'
+  ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+
+jobs:
+  destroy:
+    name: Destroy the test environment
+    runs-on: ubuntu-latest
+
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/terraform-setup
+        with:
+          stack: environment
+          state-key: environments/${{ env.ENVIRONMENT_NAME }}/terraform.tfstate
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-region: ${{ vars.TF_STATE_REGION }}
+          state-endpoint: ${{ vars.TF_STATE_ENDPOINT }}
+
+      - name: Point the stack at the platform and add-ons state
+        run: ./scripts/write-remote-state-vars.sh terraform/stacks/environment platform addons
+
+      - name: Destroy
+        working-directory: terraform/stacks/environment
+        env:
+          LDES_BASE_DOMAIN: ${{ vars.LDES_BASE_DOMAIN }}
+          LDES_SERVER_IMAGE_TAG: ${{ vars.LDES_SERVER_IMAGE_TAG }}
+          LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+
+          ../../../scripts/write-environment-vars.sh .
+
+          # Nothing to do when the state is empty, which is the common case because the deploy
+          # workflow already destroyed the environment at the end of its run.
+          if [ "$(terraform state list | wc -l)" -eq 0 ]; then
+              echo "No resources tracked for ${ENVIRONMENT_NAME}, nothing to destroy."
+              exit 0
+          fi
+
+          terraform destroy -auto-approve -no-color -lock-timeout=10m

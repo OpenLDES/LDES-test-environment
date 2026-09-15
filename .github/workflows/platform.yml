@@ -1,0 +1,175 @@
+name: Platform
+
+# Creates and maintains the long lived part of the test environment: the OVHcloud Managed
+# Kubernetes cluster, the shared managed PostgreSQL cluster and the ingress controller.
+#
+# Pull request environments are deployed on top of this by pr-test-environment.yml, so a pull
+# request only ever gets a plan here; applying is a deliberate action on main.
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/stacks/platform/**'
+      - 'terraform/stacks/addons/**'
+      - 'terraform/modules/**'
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/stacks/platform/**'
+      - 'terraform/stacks/addons/**'
+      - 'terraform/modules/**'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do with the platform.
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply, destroy]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ldes-platform
+  cancel-in-progress: false
+
+env:
+  OVH_ENDPOINT: ${{ vars.OVH_ENDPOINT }}
+  OVH_APPLICATION_KEY: ${{ secrets.OVH_APPLICATION_KEY }}
+  OVH_APPLICATION_SECRET: ${{ secrets.OVH_APPLICATION_SECRET }}
+  OVH_CONSUMER_KEY: ${{ secrets.OVH_CONSUMER_KEY }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_KEY }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
+  TF_STATE_ENDPOINT: ${{ vars.TF_STATE_ENDPOINT }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: '0'
+  TF_VAR_service_name: ${{ secrets.OVH_CLOUD_PROJECT_SERVICE }}
+  TF_VAR_region: ${{ vars.OVH_REGION }}
+  TF_VAR_database_region: ${{ vars.OVH_DATABASE_REGION }}
+
+jobs:
+  mode:
+    name: Determine mode
+    runs-on: ubuntu-latest
+
+    # Pull requests from forks have no access to the repository secrets, so there is nothing
+    # meaningful to plan for them.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+
+    steps:
+      - id: mode
+        run: |
+          case "${{ github.event_name }}" in
+              push)              mode=apply ;;
+              workflow_dispatch) mode="${{ inputs.action }}" ;;
+              *)                 mode=plan ;;
+          esac
+          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
+          echo "Running in ${mode} mode."
+
+  destroy-addons:
+    name: Destroy add-ons
+    needs: mode
+    if: needs.mode.outputs.mode == 'destroy'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/terraform-setup
+        with:
+          stack: addons
+          state-key: addons/terraform.tfstate
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-region: ${{ vars.TF_STATE_REGION }}
+          state-endpoint: ${{ vars.TF_STATE_ENDPOINT }}
+
+      - name: Point the stack at the platform state
+        run: ./scripts/write-remote-state-vars.sh terraform/stacks/addons platform
+
+      # Removing the ingress controller first releases the OVHcloud load balancer it created,
+      # which would otherwise be left behind when the cluster disappears underneath it.
+      - name: Destroy
+        working-directory: terraform/stacks/addons
+        run: terraform destroy -auto-approve -no-color -lock-timeout=5m
+
+  platform:
+    name: Platform
+    needs: [mode, destroy-addons]
+    if: always() && needs.mode.result == 'success' && (needs.mode.outputs.mode != 'destroy' || needs.destroy-addons.result == 'success')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/terraform-setup
+        with:
+          stack: platform
+          state-key: platform/terraform.tfstate
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-region: ${{ vars.TF_STATE_REGION }}
+          state-endpoint: ${{ vars.TF_STATE_ENDPOINT }}
+
+      - name: Plan
+        if: needs.mode.outputs.mode == 'plan'
+        working-directory: terraform/stacks/platform
+        run: terraform plan -no-color -lock-timeout=5m
+
+      - name: Apply
+        if: needs.mode.outputs.mode == 'apply'
+        working-directory: terraform/stacks/platform
+        run: terraform apply -auto-approve -no-color -lock-timeout=10m
+
+      - name: Destroy
+        if: needs.mode.outputs.mode == 'destroy'
+        working-directory: terraform/stacks/platform
+        run: terraform destroy -auto-approve -no-color -lock-timeout=10m
+
+  addons:
+    name: Add-ons
+    needs: [mode, platform]
+    if: needs.mode.outputs.mode != 'destroy'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/terraform-setup
+        with:
+          stack: addons
+          state-key: addons/terraform.tfstate
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-region: ${{ vars.TF_STATE_REGION }}
+          state-endpoint: ${{ vars.TF_STATE_ENDPOINT }}
+
+      - name: Point the stack at the platform state
+        run: ./scripts/write-remote-state-vars.sh terraform/stacks/addons platform
+
+      - name: Plan
+        if: needs.mode.outputs.mode == 'plan'
+        working-directory: terraform/stacks/addons
+        run: terraform plan -no-color -lock-timeout=5m
+
+      - name: Apply
+        if: needs.mode.outputs.mode == 'apply'
+        working-directory: terraform/stacks/addons
+        run: terraform apply -auto-approve -no-color -lock-timeout=10m
+
+      - name: Report the ingress entry point
+        if: needs.mode.outputs.mode == 'apply'
+        working-directory: terraform/stacks/addons
+        run: |
+          {
+            echo "### Platform ready"
+            echo
+            echo "| Setting | Value |"
+            echo "| --- | --- |"
+            echo "| Load balancer IP | \`$(terraform output -raw load_balancer_ip)\` |"
+            echo "| Ingress class | \`$(terraform output -raw ingress_class_name)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

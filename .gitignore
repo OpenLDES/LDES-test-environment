@@ -1,0 +1,29 @@
+# Terraform / OpenTofu
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+backend.hcl
+
+# Load test artefacts
+loadtest/loadtest-summary.json
+loadtest/loadtest-summary.md
+diagnostics/
+
+# Credentials
+kubeconfig
+*.pem
+
+# IDE
+.idea
+*.iml

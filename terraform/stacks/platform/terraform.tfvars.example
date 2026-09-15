@@ -1,0 +1,27 @@
+# Copy to terraform.tfvars for local runs. In CI every value below is supplied through
+# TF_VAR_* environment variables that are fed from GitHub secrets and variables.
+
+# service_name = "0123456789abcdef0123456789abcdef"
+
+# name_prefix     = "ldes-test"
+# region          = "GRA11"
+# database_region = "GRA"
+
+# kubernetes_version = "1.31"
+# cluster_plan       = "free"
+
+# node_pools = {
+#   workers = {
+#     flavor_name   = "b3-8"
+#     desired_nodes = 3
+#     min_nodes     = 2
+#     max_nodes     = 8
+#     autoscale     = true
+#   }
+# }
+
+# create_database      = true
+# database_version     = "16"
+# database_plan        = "essential"
+# database_flavor      = "db1-4"
+# database_nodes_count = 1

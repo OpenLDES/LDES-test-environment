@@ -1,0 +1,237 @@
+name: Pull request test environment
+
+# Deploys an isolated LDES server + LDIO + PostgreSQL environment for a pull request, runs a
+# load test against it and reports the result back on the pull request.
+#
+# The environment is torn down at the end of the run. Add the `keep-environment` label to a pull
+# request to keep it around for manual inspection; pr-test-environment-cleanup.yml destroys it
+# when the pull request is closed either way.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ldes-environment-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  OVH_ENDPOINT: ${{ vars.OVH_ENDPOINT }}
+  OVH_APPLICATION_KEY: ${{ secrets.OVH_APPLICATION_KEY }}
+  OVH_APPLICATION_SECRET: ${{ secrets.OVH_APPLICATION_SECRET }}
+  OVH_CONSUMER_KEY: ${{ secrets.OVH_CONSUMER_KEY }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_KEY }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
+  TF_STATE_ENDPOINT: ${{ vars.TF_STATE_ENDPOINT }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: '0'
+  ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+  KUBECTL_VERSION: v1.31.2
+  K6_VERSION: v0.54.0
+
+jobs:
+  test-environment:
+    name: Deploy and load test
+    runs-on: ubuntu-latest
+
+    # Pull requests from forks cannot access the secrets needed to reach OVHcloud.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl and k6
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/bin"
+
+          curl -fsSL -o "${RUNNER_TEMP}/bin/kubectl" \
+              "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x "${RUNNER_TEMP}/bin/kubectl"
+
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
+              | tar -xz -C "${RUNNER_TEMP}" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          mv "${RUNNER_TEMP}/k6" "${RUNNER_TEMP}/bin/k6"
+          chmod +x "${RUNNER_TEMP}/bin/k6"
+
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+
+      - name: Initialise the platform stack
+        uses: ./.github/actions/terraform-setup
+        with:
+          stack: platform
+          state-key: platform/terraform.tfstate
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-region: ${{ vars.TF_STATE_REGION }}
+          state-endpoint: ${{ vars.TF_STATE_ENDPOINT }}
+
+      - name: Fetch the cluster credentials
+        run: |
+          set -euo pipefail
+          umask 077
+          terraform -chdir=terraform/stacks/platform output -raw kubeconfig > "${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Initialise the environment stack
+        uses: ./.github/actions/terraform-setup
+        with:
+          stack: environment
+          state-key: environments/${{ env.ENVIRONMENT_NAME }}/terraform.tfstate
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-region: ${{ vars.TF_STATE_REGION }}
+          state-endpoint: ${{ vars.TF_STATE_ENDPOINT }}
+
+      - name: Point the stack at the platform and add-ons state
+        run: ./scripts/write-remote-state-vars.sh terraform/stacks/environment platform addons
+
+      - name: Deploy the environment
+        id: deploy
+        working-directory: terraform/stacks/environment
+        env:
+          LDES_BASE_DOMAIN: ${{ vars.LDES_BASE_DOMAIN }}
+          LDES_SERVER_IMAGE_TAG: ${{ vars.LDES_SERVER_IMAGE_TAG }}
+          LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          ../../../scripts/write-environment-vars.sh .
+
+          terraform apply -auto-approve -no-color -lock-timeout=10m
+
+          {
+              echo "ldes-server-url=$(terraform output -raw ldes_server_url)"
+              echo "ingest-url=$(terraform output -raw ingest_url)"
+              echo "view-url=$(terraform output -raw view_url)"
+              echo "namespace=$(terraform output -raw namespace)"
+              echo "sink-table=$(terraform output -raw sink_table_name)"
+              echo "member-vocabulary=$(terraform output -raw member_vocabulary)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the LDES server to serve the event stream
+        run: ./scripts/wait-for-ldes-server.sh "${{ steps.deploy.outputs.view-url }}" 900
+
+      - name: Run the load test
+        id: loadtest
+        continue-on-error: true
+        working-directory: loadtest
+        env:
+          INGEST_URL: ${{ steps.deploy.outputs.ingest-url }}
+          VIEW_URL: ${{ steps.deploy.outputs.view-url }}
+          MEMBER_VOCABULARY: ${{ steps.deploy.outputs.member-vocabulary }}
+          INGEST_RATE: ${{ vars.LOADTEST_INGEST_RATE || '50' }}
+          INGEST_DURATION: ${{ vars.LOADTEST_DURATION || '3m' }}
+          INGEST_VUS: ${{ vars.LOADTEST_INGEST_VUS || '20' }}
+          READ_RATE: ${{ vars.LOADTEST_READ_RATE || '10' }}
+          READ_VUS: ${{ vars.LOADTEST_READ_VUS || '5' }}
+        run: k6 run ldes-loadtest.js
+
+      - name: Verify that LDIO replicated the members into PostgreSQL
+        id: verify
+        continue-on-error: true
+        env:
+          MINIMUM_ROWS: ${{ vars.LOADTEST_MINIMUM_REPLICATED_ROWS || '1' }}
+        run: |
+          set -euo pipefail
+          SINK_DATABASE_URI="$(terraform -chdir=terraform/stacks/environment output -raw sink_database_uri)"
+          export SINK_DATABASE_URI
+          ./scripts/verify-replication.sh \
+              "${{ steps.deploy.outputs.namespace }}" \
+              "${{ steps.deploy.outputs.sink-table }}" \
+              "$MINIMUM_ROWS" \
+              600
+
+      - name: Collect diagnostics
+        if: always()
+        continue-on-error: true
+        run: |
+          set -eu
+          ns="${{ steps.deploy.outputs.namespace }}"
+          [ -n "$ns" ] || exit 0
+          mkdir -p diagnostics
+          kubectl -n "$ns" get all > diagnostics/resources.txt 2>&1 || true
+          kubectl -n "$ns" get events --sort-by=.lastTimestamp > diagnostics/events.txt 2>&1 || true
+          kubectl -n "$ns" logs deployment/openldes-server --tail=500 > diagnostics/ldes-server.log 2>&1 || true
+          kubectl -n "$ns" logs deployment/openldes-ldio --tail=500 > diagnostics/ldio.log 2>&1 || true
+
+      - name: Build the report
+        if: always()
+        run: |
+          set -eu
+          {
+            echo "## LDES test environment \`${ENVIRONMENT_NAME}\`"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| LDES server | ${{ steps.deploy.outputs.ldes-server-url }} |"
+            echo "| Ingest endpoint | \`${{ steps.deploy.outputs.ingest-url }}\` |"
+            echo "| Paged view | ${{ steps.deploy.outputs.view-url }} |"
+            echo "| Namespace | \`${{ steps.deploy.outputs.namespace }}\` |"
+            echo "| Sink table | \`${{ steps.deploy.outputs.sink-table }}\` |"
+            echo "| Replication into PostgreSQL | ${{ steps.verify.outcome == 'success' && 'verified' || 'not verified' }} |"
+            echo
+            if [ -f loadtest/loadtest-summary.md ]; then
+              cat loadtest/loadtest-summary.md
+            else
+              echo "### Load test did not produce a summary"
+            fi
+            echo
+            echo "_Commit ${{ github.event.pull_request.head.sha }} — [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
+          } > report.md
+
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file report.md --edit-last \
+            || gh pr comment "${{ github.event.pull_request.number }}" --body-file report.md
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-${{ env.ENVIRONMENT_NAME }}-${{ github.run_id }}
+          path: |
+            loadtest/loadtest-summary.json
+            loadtest/loadtest-summary.md
+            diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Destroy the environment
+        if: always() && !contains(github.event.pull_request.labels.*.name, 'keep-environment')
+        working-directory: terraform/stacks/environment
+        env:
+          LDES_BASE_DOMAIN: ${{ vars.LDES_BASE_DOMAIN }}
+          LDES_SERVER_IMAGE_TAG: ${{ vars.LDES_SERVER_IMAGE_TAG }}
+          LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Re-written here as well so the teardown still works when the deploy step failed
+          # before it got a chance to write the file.
+          ../../../scripts/write-environment-vars.sh .
+          terraform destroy -auto-approve -no-color -lock-timeout=10m
+
+      - name: Fail when the load test or the replication check failed
+        if: always()
+        run: |
+          if [ "${{ steps.loadtest.outcome }}" != "success" ]; then
+              echo "The load test did not meet its thresholds." >&2
+              exit 1
+          fi
+          if [ "${{ steps.verify.outcome }}" != "success" ]; then
+              echo "LDIO did not replicate the ingested members into PostgreSQL." >&2
+              exit 1
+          fi

@@ -1,0 +1,72 @@
+name: Terraform setup
+description: >-
+  Installs Terraform and initialises one of the stacks against the shared S3 compatible
+  remote state on OVHcloud Object Storage. Credentials are never written to disk: the S3
+  backend reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY and the OVHcloud provider reads
+  its OVH_* variables straight from the environment.
+
+inputs:
+  stack:
+    description: Name of the stack directory under terraform/stacks.
+    required: true
+  state-key:
+    description: Object key of the state file inside the bucket.
+    required: true
+  terraform-version:
+    description: Terraform version to install.
+    required: false
+    default: 1.16.2
+  state-bucket:
+    description: Bucket holding the Terraform state.
+    required: true
+  state-region:
+    description: Region of the state bucket, e.g. gra.
+    required: true
+  state-endpoint:
+    description: S3 endpoint of the state bucket, e.g. https://s3.gra.io.cloud.ovh.net.
+    required: true
+
+outputs:
+  working-directory:
+    description: Directory the stack was initialised in.
+    value: ${{ steps.paths.outputs.working-directory }}
+
+runs:
+  using: composite
+
+  steps:
+    - id: paths
+      shell: bash
+      run: echo "working-directory=terraform/stacks/${{ inputs.stack }}" >> "$GITHUB_OUTPUT"
+
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        terraform_wrapper: false
+
+    - name: Write backend configuration
+      shell: bash
+      working-directory: ${{ steps.paths.outputs.working-directory }}
+      run: |
+        cat > backend.hcl <<EOF
+        bucket = "${{ inputs.state-bucket }}"
+        key    = "${{ inputs.state-key }}"
+        region = "${{ inputs.state-region }}"
+
+        endpoints = {
+          s3 = "${{ inputs.state-endpoint }}"
+        }
+
+        use_path_style              = true
+        use_lockfile                = true
+        skip_credentials_validation = true
+        skip_region_validation      = true
+        skip_requesting_account_id  = true
+        skip_metadata_api_check     = true
+        skip_s3_checksum            = true
+        EOF
+
+    - name: Terraform init
+      shell: bash
+      working-directory: ${{ steps.paths.outputs.working-directory }}
+      run: terraform init -input=false -backend-config=backend.hcl

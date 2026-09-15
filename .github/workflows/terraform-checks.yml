@@ -1,0 +1,48 @@
+name: Terraform checks
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-checks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Format and validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.2
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff terraform
+
+      # No credentials and no remote state are needed to type check the configuration, so this
+      # runs on pull requests from forks as well.
+      - name: Validate every module and stack
+        run: |
+          set -euo pipefail
+          status=0
+          for dir in terraform/modules/*/ terraform/stacks/*/; do
+              echo "::group::${dir}"
+              if terraform -chdir="$dir" init -backend=false -input=false >/dev/null; then
+                  terraform -chdir="$dir" validate || status=1
+              else
+                  echo "terraform init failed for ${dir}"
+                  status=1
+              fi
+              echo "::endgroup::"
+          done
+          exit $status

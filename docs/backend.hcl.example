@@ -1,0 +1,41 @@
+# Example -backend-config for the Terraform stacks.
+#
+# The stacks declare an empty `backend "s3" {}` so that no environment specific value ends up in
+# version control. OVHcloud Object Storage speaks the S3 API, so the standard S3 backend works
+# against it as long as the path style addressing and the AWS specific pre-flight checks are
+# configured explicitly.
+#
+# Copy this file into the stack directory you want to run, fill it in, and initialise with:
+#
+#     terraform init -backend-config=backend.hcl
+#
+# Credentials are never put in this file. The backend reads them from AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY, which in CI come from the TF_STATE_ACCESS_KEY and TF_STATE_SECRET_KEY
+# repository secrets.
+#
+# Use a different `key` per stack:
+#
+#     platform/terraform.tfstate
+#     addons/terraform.tfstate
+#     environments/pr-123/terraform.tfstate
+
+bucket = "ldes-test-environment-tfstate"
+key    = "platform/terraform.tfstate"
+region = "gra"
+
+endpoints = {
+  s3 = "https://s3.gra.io.cloud.ovh.net"
+}
+
+# OVHcloud Object Storage requires path style addressing and does not implement the AWS account
+# and metadata endpoints Terraform would otherwise probe.
+use_path_style              = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+skip_s3_checksum            = true
+
+# State locking through a lock object next to the state file, so no DynamoDB table is needed.
+# Drop this line if your object storage does not support conditional writes.
+use_lockfile = true
