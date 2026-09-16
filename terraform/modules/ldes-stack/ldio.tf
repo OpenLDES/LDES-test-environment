@@ -23,6 +23,16 @@ locals {
     },
     # keep-state is not applicable to the in-memory state.
     var.ldes_client_state == "memory" ? {} : { "keep-state" = true },
+
+    # The LDES client keeps its own replication state and reads its connection details from these
+    # properties only; unlike Ldio:LdioRdbOut it ignores the Spring Boot datasource.
+    var.ldes_client_state == "postgres" ? {
+      postgres = {
+        url      = local.ldio_jdbc_url
+        username = local.ldio_database.username
+        password = local.ldio_database.password
+      }
+    } : {},
   )
 
   default_pipelines = [
@@ -80,8 +90,8 @@ locals {
           }
         }
 
-        # Both Ldio:LdioRdbOut and the PostgreSQL state of the LDES client read the standard
-        # Spring Boot datasource properties.
+        # Ldio:LdioRdbOut writes the members through the standard Spring Boot datasource. The LDES
+        # client state is configured separately, through the pipeline's postgres properties.
         spring = {
           datasource = {
             url      = local.ldio_jdbc_url
