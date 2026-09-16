@@ -14,7 +14,7 @@ variable "name" {
 }
 
 variable "region" {
-  description = "OVHcloud Public Cloud region the cluster is deployed in, e.g. GRA11 or WAW1."
+  description = "OVHcloud Public Cloud region the cluster is deployed in, e.g. GRA9 or WAW1."
   type        = string
 }
 

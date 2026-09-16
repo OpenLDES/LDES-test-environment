@@ -96,23 +96,23 @@ blocks; the provider picks up either pair from the environment.
 
 ### Variables
 
-| Variable                           | Example                           | Purpose                                                     |
-|------------------------------------|-----------------------------------|-------------------------------------------------------------|
-| `OVH_ENDPOINT`                     | `ovh-eu`                          | API endpoint matching your account                          |
-| `OVH_REGION`                       | `GRA11`                           | Region of the Kubernetes cluster                            |
-| `OVH_DATABASE_REGION`              | `GRA`                             | Region of the managed PostgreSQL cluster                    |
-| `TF_STATE_BUCKET`                  | `ldes-test-environment-tfstate`   | Bucket holding the Terraform state                          |
-| `TF_STATE_REGION`                  | `gra`                             | Region of that bucket                                       |
-| `TF_STATE_ENDPOINT`                | `https://s3.gra.io.cloud.ovh.net` | S3 endpoint of that bucket                                  |
-| `LDES_BASE_DOMAIN`                 | *(unset)*                         | Optional. Domain for environment hostnames; see below       |
-| `LDES_SERVER_IMAGE_TAG`            | `4.0.0`                           | Optional. LDES server image under test                      |
-| `LDIO_IMAGE_TAG`                   | `3.1.1`                           | Optional. LDIO image under test                             |
-| `LOADTEST_INGEST_RATE`             | `50`                              | Optional. Ingest requests per second                        |
-| `LOADTEST_DURATION`                | `3m`                              | Optional. Duration of the load test                         |
-| `LOADTEST_INGEST_VUS`              | `20`                              | Optional. Pre-allocated ingest virtual users                |
-| `LOADTEST_READ_RATE`               | `10`                              | Optional. View reads per second                             |
-| `LOADTEST_READ_VUS`                | `5`                               | Optional. Pre-allocated read virtual users                  |
-| `LOADTEST_MINIMUM_REPLICATED_ROWS` | `1`                               | Optional. Rows LDIO must have written before the run passes |
+| Variable                           | Example                                | Purpose                                                     |
+|------------------------------------|----------------------------------------|-------------------------------------------------------------|
+| `OVH_ENDPOINT`                     | `ovh-eu`                               | API endpoint matching your account                          |
+| `OVH_REGION`                       | `GRA9`                                 | Region of the Kubernetes cluster                            |
+| `OVH_DATABASE_REGION`              | `GRA`                                  | Region of the managed PostgreSQL cluster                    |
+| `TF_STATE_BUCKET`                  | `ldes-test-environment-github-tfstate` | Bucket holding the Terraform state                          |
+| `TF_STATE_REGION`                  | `gra`                                  | Region of that bucket                                       |
+| `TF_STATE_ENDPOINT`                | `https://s3.gra.io.cloud.ovh.net`      | S3 endpoint of that bucket                                  |
+| `LDES_BASE_DOMAIN`                 | *(unset)*                              | Optional. Domain for environment hostnames; see below       |
+| `LDES_SERVER_IMAGE_TAG`            | `4.0.0`                                | Optional. LDES server image under test                      |
+| `LDIO_IMAGE_TAG`                   | `3.1.1`                                | Optional. LDIO image under test                             |
+| `LOADTEST_INGEST_RATE`             | `50`                                   | Optional. Ingest requests per second                        |
+| `LOADTEST_DURATION`                | `3m`                                   | Optional. Duration of the load test                         |
+| `LOADTEST_INGEST_VUS`              | `20`                                   | Optional. Pre-allocated ingest virtual users                |
+| `LOADTEST_READ_RATE`               | `10`                                   | Optional. View reads per second                             |
+| `LOADTEST_READ_VUS`                | `5`                                    | Optional. Pre-allocated read virtual users                  |
+| `LOADTEST_MINIMUM_REPLICATED_ROWS` | `1`                                    | Optional. Rows LDIO must have written before the run passes |
 
 ### Hostnames
 
