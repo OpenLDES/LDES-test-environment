@@ -75,7 +75,18 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+
+          # `terraform output` exits 0 with only a warning when the state is empty, so the
+          # emptiness of the kubeconfig is what tells us the platform was never applied.
           terraform -chdir=terraform/stacks/platform output -raw kubeconfig > "${RUNNER_TEMP}/kubeconfig"
+
+          if [ ! -s "${RUNNER_TEMP}/kubeconfig" ]; then
+              echo "::error::The platform stack has no usable state: no kubeconfig output was found." \
+                  "Run the Platform workflow on main (or with workflow_dispatch in apply mode) before" \
+                  "deploying a pull request environment." >&2
+              exit 1
+          fi
+
           echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "$GITHUB_ENV"
 
       - name: Initialise the environment stack
@@ -224,9 +235,13 @@ jobs:
           ../../../scripts/write-environment-vars.sh .
           terraform destroy -auto-approve -no-color -lock-timeout=10m
 
-      - name: Fail when the load test or the replication check failed
+      - name: Fail when the deployment, the load test or the replication check failed
         if: always()
         run: |
+          if [ "${{ steps.deploy.outcome }}" != "success" ]; then
+              echo "The environment could not be deployed, so the load test never ran." >&2
+              exit 1
+          fi
           if [ "${{ steps.loadtest.outcome }}" != "success" ]; then
               echo "The load test did not meet its thresholds." >&2
               exit 1

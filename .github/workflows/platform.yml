@@ -134,7 +134,12 @@ jobs:
   addons:
     name: Add-ons
     needs: [mode, platform]
-    if: needs.mode.outputs.mode != 'destroy'
+
+    # `always()` is required because the platform job depends on destroy-addons, which is skipped
+    # outside destroy mode. Without it GitHub propagates that skip down the graph and this job
+    # never runs, leaving the add-ons state empty.
+    if: always() && needs.mode.result == 'success' && needs.platform.result == 'success' && needs.mode.outputs.mode != 'destroy'
+
     runs-on: ubuntu-latest
 
     steps:
