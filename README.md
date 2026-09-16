@@ -117,8 +117,11 @@ blocks; the provider picks up either pair from the environment.
 ### Hostnames
 
 When `LDES_BASE_DOMAIN` is unset, every environment is reachable at
-`pr-<number>.<load-balancer-ip>.nip.io`. [nip.io](https://nip.io) resolves that to the load balancer
-address, so throwaway environments need no DNS management at all. Set `LDES_BASE_DOMAIN`
+`pr-<number>.<load-balancer-ip-with-dashes>.nip.io`, for example
+`pr-12.203-0-113-45.nip.io`. [nip.io](https://nip.io) resolves that to the load balancer
+address, so throwaway environments need no DNS management at all. The dashed form is required:
+nip.io resolves a name to the first dotted quad it finds, so `pr-12.203.0.113.45.nip.io` would
+resolve to `12.203.0.113` instead of the load balancer. Set `LDES_BASE_DOMAIN`
 to a wildcard domain you control (`*.ldes.example.org`) to use real hostnames instead.
 
 ## Bootstrapping
@@ -174,8 +177,8 @@ export TF_STATE_BUCKET=... TF_STATE_REGION=... TF_STATE_ENDPOINT=...
 
 ```bash
 cd loadtest
-INGEST_URL=http://pr-12.203.0.113.nip.io/loadtest \
-VIEW_URL=http://pr-12.203.0.113.nip.io/loadtest/by-page \
+INGEST_URL=http://pr-12.203-0-113-45.nip.io/loadtest \
+VIEW_URL=http://pr-12.203-0-113-45.nip.io/loadtest/by-page \
 INGEST_RATE=50 INGEST_DURATION=2m \
 k6 run ldes-loadtest.js
 ```
