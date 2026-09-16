@@ -12,7 +12,7 @@ variable "name_prefix" {
 variable "region" {
   description = "OVHcloud Public Cloud region for the Kubernetes cluster, e.g. GRA11."
   type        = string
-  default     = "GRA11"
+  default     = "GRA9"
 }
 
 variable "database_region" {

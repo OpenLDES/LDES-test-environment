@@ -27,3 +27,5 @@ kubeconfig
 # IDE
 .idea
 *.iml
+
+.README.md
