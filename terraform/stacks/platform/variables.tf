@@ -115,3 +115,14 @@ variable "database_ip_restrictions" {
     "any" = "0.0.0.0/0"
   }
 }
+
+variable "database_admin_password_reset" {
+  description = <<-EOT
+    Arbitrary string that triggers a reset of the managed PostgreSQL "avnadmin" password whenever
+    it changes. OVHcloud only hands out that password in the response of a reset, so a value is
+    always required; change it to rotate the credential.
+  EOT
+
+  type    = string
+  default = "initial"
+}

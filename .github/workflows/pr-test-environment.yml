@@ -90,6 +90,7 @@ jobs:
           echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "$GITHUB_ENV"
 
       - name: Initialise the environment stack
+        id: env-init
         uses: ./.github/actions/terraform-setup
         with:
           stack: environment
@@ -220,7 +221,9 @@ jobs:
           retention-days: 14
 
       - name: Destroy the environment
-        if: always() && !contains(github.event.pull_request.labels.*.name, 'keep-environment')
+        # Without an initialised backend there is nothing to destroy, and terraform would only add
+        # a confusing "Backend initialization required" failure on top of the real one.
+        if: always() && steps.env-init.outcome == 'success' && !contains(github.event.pull_request.labels.*.name, 'keep-environment')
         working-directory: terraform/stacks/environment
         env:
           LDES_BASE_DOMAIN: ${{ vars.LDES_BASE_DOMAIN }}
