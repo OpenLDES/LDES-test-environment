@@ -179,9 +179,34 @@ jobs:
           kubectl -n "$ns" logs deployment/openldes-ldio --tail=500 > diagnostics/ldio.log 2>&1 || true
           kubectl -n "$ns" logs --previous deployment/openldes-ldio --tail=500 > diagnostics/ldio-previous.log 2>&1 || true
 
+          # LDIO replicates over the public ingress hostname, so a pod must be able to reach the
+          # load balancer it resolves to. Compare that against the cluster-internal service to tell
+          # a broken ingress apart from a hairpinning problem.
+          host="$(kubectl -n "$ns" get ingress -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || true)"
+          if [ -n "$host" ]; then
+              kubectl -n "$ns" delete pod ldes-connectivity-check --ignore-not-found >/dev/null 2>&1 || true
+              kubectl -n "$ns" run ldes-connectivity-check --image=alpine/curl:latest --restart=Never \
+                  --command -- sh -c "
+                      echo 'resolving ${host}'; nslookup '${host}' || true
+                      echo 'public ingress:'
+                      curl -sS -m 30 -o /dev/null -w 'status=%{http_code} time=%{time_total}\n' \"http://${host}/\" || echo 'UNREACHABLE'
+                      echo 'internal service:'
+                      curl -sS -m 30 -o /dev/null -w 'status=%{http_code} time=%{time_total}\n' \"http://openldes-server.${ns}.svc.cluster.local:8080/\" || echo 'UNREACHABLE'
+                  " >/dev/null 2>&1 || true
+
+              for _ in $(seq 1 20); do
+                  phase="$(kubectl -n "$ns" get pod ldes-connectivity-check -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                  case "$phase" in Succeeded|Failed) break ;; esac
+                  sleep 5
+              done
+
+              kubectl -n "$ns" logs ldes-connectivity-check > diagnostics/connectivity.txt 2>&1 || true
+              kubectl -n "$ns" delete pod ldes-connectivity-check --ignore-not-found >/dev/null 2>&1 || true
+          fi
+
           # Surface the most useful parts in the job log as well, so a failed run is diagnosable
           # without downloading the artefact.
-          for f in diagnostics/resources.txt diagnostics/events.txt diagnostics/ldio.log; do
+          for f in diagnostics/connectivity.txt diagnostics/resources.txt diagnostics/events.txt diagnostics/ldio.log; do
               [ -s "$f" ] || continue
               echo "::group::$f"
               tail -100 "$f"
