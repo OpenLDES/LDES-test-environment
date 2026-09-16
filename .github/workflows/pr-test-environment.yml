@@ -165,13 +165,28 @@ jobs:
         continue-on-error: true
         run: |
           set -eu
+          # The deploy step only publishes its outputs after a successful apply, so fall back to
+          # the namespace the environment stack derives from the environment name. Without this
+          # the diagnostics are empty exactly when a deployment failed.
           ns="${{ steps.deploy.outputs.namespace }}"
-          [ -n "$ns" ] || exit 0
+          ns="${ns:-ldes-${ENVIRONMENT_NAME}}"
+          [ -n "${KUBECONFIG:-}" ] || exit 0
           mkdir -p diagnostics
           kubectl -n "$ns" get all > diagnostics/resources.txt 2>&1 || true
+          kubectl -n "$ns" describe pods > diagnostics/pods.txt 2>&1 || true
           kubectl -n "$ns" get events --sort-by=.lastTimestamp > diagnostics/events.txt 2>&1 || true
           kubectl -n "$ns" logs deployment/openldes-server --tail=500 > diagnostics/ldes-server.log 2>&1 || true
           kubectl -n "$ns" logs deployment/openldes-ldio --tail=500 > diagnostics/ldio.log 2>&1 || true
+          kubectl -n "$ns" logs --previous deployment/openldes-ldio --tail=500 > diagnostics/ldio-previous.log 2>&1 || true
+
+          # Surface the most useful parts in the job log as well, so a failed run is diagnosable
+          # without downloading the artefact.
+          for f in diagnostics/resources.txt diagnostics/events.txt diagnostics/ldio.log; do
+              [ -s "$f" ] || continue
+              echo "::group::$f"
+              tail -100 "$f"
+              echo "::endgroup::"
+          done
 
       - name: Build the report
         if: always()
