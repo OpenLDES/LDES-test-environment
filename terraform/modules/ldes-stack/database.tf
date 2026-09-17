@@ -166,23 +166,8 @@ resource "kubernetes_service_v1" "in_cluster_postgres" {
 # --------------------------------------------------------------------------------------------
 
 locals {
-  default_sink_table_ddl = <<-SQL
-    CREATE TABLE IF NOT EXISTS ${var.sink_table_name} (
-        version_id  TEXT PRIMARY KEY,
-        member_id   TEXT NOT NULL,
-        created_at  TEXT NOT NULL,
-        value       TEXT,
-        ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-
-    CREATE INDEX IF NOT EXISTS ${var.sink_table_name}_member_id_idx
-        ON ${var.sink_table_name} (member_id);
-
-    CREATE INDEX IF NOT EXISTS ${var.sink_table_name}_ingested_at_idx
-        ON ${var.sink_table_name} (ingested_at);
-  SQL
-
-  sink_table_ddl = coalesce(var.sink_table_ddl, local.default_sink_table_ddl)
+  # The sink schema is generated from the catalogue; see catalog.tf.
+  sink_ddl = join("\n\n", compact([local.sink_table_ddl, var.sink_schema_ddl]))
 
   maintenance_uri = "postgresql://${urlencode(local.ldio_database.username)}:${urlencode(local.ldio_database.password)}@${local.ldio_database.host}:${local.ldio_database.port}/postgres?sslmode=${coalesce(local.ldio_database.ssl_mode, "require")}"
 
@@ -247,7 +232,7 @@ resource "kubernetes_config_map_v1" "bootstrap" {
 
   data = {
     "bootstrap.sh" = local.bootstrap_script
-    "sink.sql"     = local.sink_table_ddl
+    "sink.sql"     = local.sink_ddl
   }
 }
 
@@ -255,7 +240,7 @@ resource "kubernetes_job_v1" "bootstrap" {
   # Jobs are immutable, so the name carries a digest of what the job actually runs. Changing the
   # DDL therefore replaces the job instead of failing the apply.
   metadata {
-    name      = "ldes-database-bootstrap-${substr(sha256("${local.bootstrap_script}${local.sink_table_ddl}"), 0, 10)}"
+    name      = "ldes-database-bootstrap-${substr(sha256("${local.bootstrap_script}${local.sink_ddl}"), 0, 10)}"
     namespace = local.namespace
     labels    = local.common_labels
   }

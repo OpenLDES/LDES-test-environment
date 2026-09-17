@@ -87,4 +87,11 @@ output "database_admin_password" {
   description = "Superuser password of the managed PostgreSQL cluster, or null when disabled."
   value       = one(module.postgresql[*].admin_password)
   sensitive   = true
+
+  # A null password is silently dropped from the state, so dependent stacks would only fail much
+  # later with "This object does not have an attribute named database_admin_password".
+  precondition {
+    condition     = !var.create_database || one(module.postgresql[*].admin_password) != null
+    error_message = "The managed PostgreSQL cluster returned no admin password. Change database_admin_password_reset to force OVHcloud to issue one."
+  }
 }
