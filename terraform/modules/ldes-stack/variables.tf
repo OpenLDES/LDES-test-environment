@@ -108,37 +108,53 @@ variable "ldes_server_host_name" {
   }
 }
 
-variable "event_stream_name" {
-  description = "Name of the event stream created on the LDES server at startup."
-  type        = string
-  default     = "loadtest"
-
-  validation {
-    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.event_stream_name))
-    error_message = "event_stream_name must be lowercase alphanumeric characters or '-'."
-  }
-}
-
-variable "view_name" {
-  description = "Name of the paged view created on the event stream. This is the view LDIO replicates from."
-  type        = string
-  default     = "by-page"
-}
-
-variable "view_page_size" {
-  description = "Number of members per fragment in the paged view."
-  type        = number
-  default     = 250
-}
-
-variable "ldes_server_streams" {
+variable "streams_catalog" {
   description = <<-EOT
-    Full override for the chart's `config.streams` value. Leave null to use the generated
-    single-stream / single-view definition driven by event_stream_name and view_name.
+    Decoded catalog/streams.json: the event streams, their views, the PostgreSQL sink tables and
+    the data quality expectations. This single document drives the LDES server configuration, the
+    LDIO pipelines, the sink schema, the load test and the validation, so that none of them can
+    drift apart.
   EOT
 
-  type    = any
-  default = null
+  type = any
+
+  validation {
+    condition     = try(length(var.streams_catalog.streams), 0) > 0
+    error_message = "streams_catalog must contain at least one stream."
+  }
+
+  validation {
+    condition = alltrue([
+      for stream in try(var.streams_catalog.streams, []) :
+      contains([for view in stream.views : view.name], stream.replicationView)
+    ])
+    error_message = "Every stream must declare a replicationView that is one of its own views."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for stream in try(var.streams_catalog.streams, []) : [
+        for view in stream.views : contains(["paged", "geospatial", "timebased"], view.kind)
+      ]
+    ]))
+    error_message = "View kinds must be one of paged, geospatial or timebased."
+  }
+
+  # Stream, view, table and column names are interpolated into Turtle, SPARQL and DDL without
+  # quoting, so they are constrained here rather than at every use.
+  validation {
+    condition = alltrue(flatten([
+      for stream in try(var.streams_catalog.streams, []) : concat(
+        [
+          can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", stream.name)),
+          can(regex("^[a-z_][a-z0-9_]*$", stream.sink.table)),
+        ],
+        [for view in stream.views : can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", view.name))],
+        [for column in stream.sink.columns : can(regex("^[a-z_][a-z0-9_]*$", column.name))],
+      )
+    ]))
+    error_message = "Stream and view names must be lowercase alphanumerics and '-', and table and column names must be plain lowercase PostgreSQL identifiers."
+  }
 }
 
 variable "ldes_server_replicas" {
@@ -179,16 +195,6 @@ variable "ldes_server_extra_values" {
 # LDIO
 # --------------------------------------------------------------------------------------------
 
-variable "ldio_pipelines" {
-  description = <<-EOT
-    Full override for the chart's `config.orchestrator.pipelines` value. Leave null to use the
-    generated pipeline that replicates the event stream into the PostgreSQL sink table.
-  EOT
-
-  type    = any
-  default = null
-}
-
 variable "ldio_resources" {
   description = "Resource requests and limits for the LDIO container."
 
@@ -207,13 +213,27 @@ variable "ldio_log_level" {
 }
 
 variable "ldes_client_state" {
-  description = "Persistence strategy of the LDES client inside LDIO: memory, sqlite or postgres."
-  type        = string
-  default     = "postgres"
+  description = <<-EOT
+    Persistence strategy of the LDES client inside LDIO: memory, sqlite or postgres.
+
+    Defaults to memory. The SQL backed state of the LDES client stores its members and its
+    replication state in fixed, undiscriminated tables (`member`, `member_id`, `member_hashed`,
+    `treenode`), and offers no schema or table prefix setting. With one pipeline per event stream
+    they would all share those tables and consume each other's members, so a SQL state is only
+    allowed when the catalogue defines a single stream.
+  EOT
+
+  type    = string
+  default = "memory"
 
   validation {
     condition     = contains(["memory", "sqlite", "postgres"], var.ldes_client_state)
     error_message = "ldes_client_state must be one of memory, sqlite or postgres."
+  }
+
+  validation {
+    condition     = var.ldes_client_state == "memory" || try(length(var.streams_catalog.streams), 0) <= 1
+    error_message = "Only the in-memory LDES client state can be shared by more than one pipeline; the sqlite and postgres states would collide on their fixed table names."
   }
 }
 
@@ -233,10 +253,14 @@ variable "ldio_ldes_server_url" {
   default = null
 }
 
-variable "member_vocabulary" {
-  description = "Namespace IRI of the member properties the default SPARQL sink query selects. Must match the payload produced by the load test."
-  type        = string
-  default     = "https://openldes.org/ns/loadtest#"
+variable "sink_schema_ddl" {
+  description = <<-EOT
+    Extra DDL executed after the generated sink schema, before LDIO starts. The tables themselves
+    are derived from the catalogue; this is only an escape hatch for additional objects.
+  EOT
+
+  type    = string
+  default = ""
 }
 
 # --------------------------------------------------------------------------------------------
@@ -298,34 +322,6 @@ variable "in_cluster_postgres" {
   })
 
   default = {}
-}
-
-variable "sink_table_name" {
-  description = "Name of the table LDIO writes the replicated members into."
-  type        = string
-  default     = "ldes_members"
-
-  validation {
-    condition     = can(regex("^[a-z_][a-z0-9_]*$", var.sink_table_name))
-    error_message = "sink_table_name must be a plain lowercase PostgreSQL identifier."
-  }
-}
-
-variable "sink_table_ddl" {
-  description = <<-EOT
-    DDL executed before LDIO starts. Ldio:LdioRdbOut requires the target table to exist and maps
-    SPARQL variable names onto column names. Leave null to use the DDL matching the default
-    pipeline and the bundled load test payload.
-  EOT
-
-  type    = string
-  default = null
-}
-
-variable "sink_sparql_query" {
-  description = "SPARQL SELECT query used by Ldio:LdioRdbOut to flatten members into table rows. Leave null to use the default matching sink_table_ddl."
-  type        = string
-  default     = null
 }
 
 # --------------------------------------------------------------------------------------------

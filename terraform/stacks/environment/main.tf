@@ -1,6 +1,10 @@
 locals {
   namespace = coalesce(var.namespace, "ldes-${var.environment_name}")
 
+  # The stream catalogue is shared with the load test and the validation scripts, so it lives in
+  # the repository root rather than in this stack.
+  streams_catalog = jsondecode(file(coalesce(var.streams_catalog_file, "${path.module}/../../../catalog/streams.json")))
+
   # PostgreSQL identifiers do not allow dashes without quoting, so the DNS label is folded into
   # an identifier friendly form for the per-environment database names.
   database_suffix = replace(var.environment_name, "-", "_")
@@ -86,9 +90,8 @@ module "ldes_stack" {
 
   ldes_server_host_name = local.ldes_server_host_name
 
-  event_stream_name = var.event_stream_name
-  view_name         = var.view_name
-  view_page_size    = var.view_page_size
+  streams_catalog   = local.streams_catalog
+  ldes_client_state = var.ldes_client_state
 
   ldes_server_chart_version = var.ldes_server_chart_version
   ldio_chart_version        = var.ldio_chart_version

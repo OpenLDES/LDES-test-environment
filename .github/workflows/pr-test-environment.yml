@@ -120,45 +120,61 @@ jobs:
 
           {
               echo "ldes-server-url=$(terraform output -raw ldes_server_url)"
-              echo "ingest-url=$(terraform output -raw ingest_url)"
-              echo "view-url=$(terraform output -raw view_url)"
               echo "namespace=$(terraform output -raw namespace)"
-              echo "sink-table=$(terraform output -raw sink_table_name)"
-              echo "member-vocabulary=$(terraform output -raw member_vocabulary)"
+              echo "view-urls=$(terraform output -json view_urls | jq -r 'join(" ")')"
+              echo "streams=$(terraform output -json stream_names | jq -r 'join(", ")')"
+              echo "sink-tables=$(terraform output -json sink_tables | jq -r 'join(", ")')"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Wait for the LDES server to serve the event stream
-        run: ./scripts/wait-for-ldes-server.sh "${{ steps.deploy.outputs.view-url }}" 900
+      - name: Wait for the LDES server to serve every view
+        run: ./scripts/wait-for-ldes-server.sh 900 ${{ steps.deploy.outputs.view-urls }}
+
+      - name: Ingest the realistic basis
+        id: seed
+        continue-on-error: true
+        working-directory: loadtest
+        env:
+          LDES_SERVER_URL: ${{ steps.deploy.outputs.ldes-server-url }}
+          MEMBER_SCALE: ${{ vars.LOADTEST_MEMBER_SCALE || '1' }}
+        run: k6 run --no-usage-report seed.js
 
       - name: Run the load test
         id: loadtest
         continue-on-error: true
         working-directory: loadtest
         env:
-          INGEST_URL: ${{ steps.deploy.outputs.ingest-url }}
-          VIEW_URL: ${{ steps.deploy.outputs.view-url }}
-          MEMBER_VOCABULARY: ${{ steps.deploy.outputs.member-vocabulary }}
-          INGEST_RATE: ${{ vars.LOADTEST_INGEST_RATE || '50' }}
-          INGEST_DURATION: ${{ vars.LOADTEST_DURATION || '3m' }}
-          INGEST_VUS: ${{ vars.LOADTEST_INGEST_VUS || '20' }}
-          READ_RATE: ${{ vars.LOADTEST_READ_RATE || '10' }}
-          READ_VUS: ${{ vars.LOADTEST_READ_VUS || '5' }}
-        run: k6 run ldes-loadtest.js
+          LDES_SERVER_URL: ${{ steps.deploy.outputs.ldes-server-url }}
+          MEMBER_SCALE: ${{ vars.LOADTEST_MEMBER_SCALE || '1' }}
+          INGEST_VUS: ${{ vars.LOADTEST_INGEST_VUS || '1' }}
+          INGEST_MAX_DURATION_SECONDS: ${{ vars.LOADTEST_INGEST_MAX_DURATION_SECONDS || '600' }}
+          QUERY_VUS: ${{ vars.LOADTEST_QUERY_VUS || '10' }}
+          QUERY_RATE: ${{ vars.LOADTEST_QUERY_RATE || '20' }}
+          QUERY_DURATION_SECONDS: ${{ vars.LOADTEST_QUERY_DURATION_SECONDS || '120' }}
+          SETTLE_SECONDS: ${{ vars.LOADTEST_SETTLE_SECONDS || '45' }}
+          INGEST_P95_MS: ${{ vars.LOADTEST_INGEST_P95_MS || '2000' }}
+          QUERY_P95_MS: ${{ vars.LOADTEST_QUERY_P95_MS || '3000' }}
+        run: k6 run --no-usage-report ldes-loadtest.js
 
-      - name: Verify that LDIO replicated the members into PostgreSQL
+      - name: Wait for LDIO and validate the PostgreSQL sink
         id: verify
         continue-on-error: true
-        env:
-          MINIMUM_ROWS: ${{ vars.LOADTEST_MINIMUM_REPLICATED_ROWS || '1' }}
         run: |
           set -euo pipefail
+
+          node scripts/generate-sink-sql.js \
+              --catalog catalog/streams.json \
+              --seed loadtest/seed-summary.json \
+              --loadtest loadtest/loadtest-metrics.json \
+              --out reports/sql
+
           SINK_DATABASE_URI="$(terraform -chdir=terraform/stacks/environment output -raw sink_database_uri)"
           export SINK_DATABASE_URI
-          ./scripts/verify-replication.sh \
+
+          ./scripts/verify-sink.sh \
               "${{ steps.deploy.outputs.namespace }}" \
-              "${{ steps.deploy.outputs.sink-table }}" \
-              "$MINIMUM_ROWS" \
-              600
+              reports/sql \
+              reports \
+              "${{ vars.LOADTEST_REPLICATION_TIMEOUT_SECONDS || '900' }}"
 
       - name: Collect diagnostics
         if: always()
@@ -213,30 +229,42 @@ jobs:
               echo "::endgroup::"
           done
 
-      - name: Build the report
+      - name: Build and validate the report
+        id: report
+        if: always()
+        continue-on-error: true
+        env:
+          ENVIRONMENT_NAME: ${{ env.ENVIRONMENT_NAME }}
+          LDES_SERVER_URL: ${{ steps.deploy.outputs.ldes-server-url }}
+          MAX_INGEST_P95_MS: ${{ vars.REPORT_MAX_INGEST_P95_MS || '2000' }}
+          MAX_INGEST_MAX_MS: ${{ vars.REPORT_MAX_INGEST_MAX_MS || '15000' }}
+          MAX_QUERY_P95_MS: ${{ vars.REPORT_MAX_QUERY_P95_MS || '3000' }}
+          MAX_QUERY_MAX_MS: ${{ vars.REPORT_MAX_QUERY_MAX_MS || '15000' }}
+          MAX_VIEW_P95_MS: ${{ vars.REPORT_MAX_VIEW_P95_MS || '5000' }}
+          MAX_REPLICATION_SECONDS: ${{ vars.REPORT_MAX_REPLICATION_SECONDS || '600' }}
+          MIN_INGEST_COMPLETION: ${{ vars.REPORT_MIN_INGEST_COMPLETION || '0.95' }}
+          MAX_INGEST_FAILURES: ${{ vars.REPORT_MAX_INGEST_FAILURES || '0' }}
+          MAX_QUERY_FAILURES: ${{ vars.REPORT_MAX_QUERY_FAILURES || '0' }}
+        run: |
+          set -o pipefail
+          node scripts/build-report.js --out report.md --json reports/report.json > /dev/null
+
+      - name: Publish the report
         if: always()
         run: |
           set -eu
+          if [ ! -s report.md ]; then
+            {
+              echo "## LDES test environment \`${ENVIRONMENT_NAME}\`"
+              echo
+              echo "The run failed before a report could be built. See the job log and the diagnostics artefact."
+            } > report.md
+          fi
+
           {
-            echo "## LDES test environment \`${ENVIRONMENT_NAME}\`"
-            echo
-            echo "| | |"
-            echo "| --- | --- |"
-            echo "| LDES server | ${{ steps.deploy.outputs.ldes-server-url }} |"
-            echo "| Ingest endpoint | \`${{ steps.deploy.outputs.ingest-url }}\` |"
-            echo "| Paged view | ${{ steps.deploy.outputs.view-url }} |"
-            echo "| Namespace | \`${{ steps.deploy.outputs.namespace }}\` |"
-            echo "| Sink table | \`${{ steps.deploy.outputs.sink-table }}\` |"
-            echo "| Replication into PostgreSQL | ${{ steps.verify.outcome == 'success' && 'verified' || 'not verified' }} |"
-            echo
-            if [ -f loadtest/loadtest-summary.md ]; then
-              cat loadtest/loadtest-summary.md
-            else
-              echo "### Load test did not produce a summary"
-            fi
             echo
             echo "_Commit ${{ github.event.pull_request.head.sha }} — [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
-          } > report.md
+          } >> report.md
 
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -254,8 +282,12 @@ jobs:
         with:
           name: loadtest-${{ env.ENVIRONMENT_NAME }}-${{ github.run_id }}
           path: |
+            loadtest/seed-summary.json
             loadtest/loadtest-summary.json
             loadtest/loadtest-summary.md
+            loadtest/loadtest-metrics.json
+            reports/
+            report.md
             diagnostics/
           if-no-files-found: ignore
           retention-days: 14
@@ -278,18 +310,26 @@ jobs:
           ../../../scripts/write-environment-vars.sh .
           terraform destroy -auto-approve -no-color -lock-timeout=10m
 
-      - name: Fail when the deployment, the load test or the replication check failed
+      - name: Fail when any stage of the run failed
         if: always()
         run: |
           if [ "${{ steps.deploy.outcome }}" != "success" ]; then
               echo "The environment could not be deployed, so the load test never ran." >&2
               exit 1
           fi
+          if [ "${{ steps.seed.outcome }}" != "success" ]; then
+              echo "The realistic basis could not be ingested." >&2
+              exit 1
+          fi
           if [ "${{ steps.loadtest.outcome }}" != "success" ]; then
-              echo "The load test did not meet its thresholds." >&2
+              echo "The load test did not meet its k6 thresholds." >&2
               exit 1
           fi
           if [ "${{ steps.verify.outcome }}" != "success" ]; then
-              echo "LDIO did not replicate the ingested members into PostgreSQL." >&2
+              echo "The PostgreSQL sink could not be validated." >&2
+              exit 1
+          fi
+          if [ "${{ steps.report.outcome }}" != "success" ]; then
+              echo "The report found a data quality issue or a breached time metric." >&2
               exit 1
           fi

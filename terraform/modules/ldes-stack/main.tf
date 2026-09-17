@@ -40,8 +40,6 @@ locals {
   ldes_server_internal_url = "http://${var.ldes_server_release_name}.${var.namespace}.svc.cluster.local:8080"
 
   ldes_server_public_url = var.ldes_server_host_name
-  event_stream_url       = "${local.ldes_server_public_url}/${var.event_stream_name}"
-  view_url               = "${local.event_stream_url}/${var.view_name}"
 }
 
 resource "kubernetes_namespace_v1" "this" {

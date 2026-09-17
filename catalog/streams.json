@@ -1,0 +1,294 @@
+{
+  "$comment": [
+    "Single source of truth for the LDES test environment.",
+    "",
+    "Consumed by three independent components, which must all agree on the same shapes:",
+    "  - terraform/modules/ldes-stack  renders the event stream and view configurations, the LDIO",
+    "                                  pipelines and the sink DDL from this file;",
+    "  - loadtest/                     generates the members and queries the views;",
+    "  - scripts/                      generates the row count and data quality SQL.",
+    "",
+    "Every sink column declares the RDF property path it is filled from, which is what keeps the",
+    "generated payload, the SPARQL SELECT of Ldio:LdioRdbOut and the table definition in sync."
+  ],
+
+  "identifierBase": "https://openldes.org/id",
+
+  "prefixes": {
+    "dcterms": "http://purl.org/dc/terms/",
+    "env": "https://openldes.org/ns/env#",
+    "geosparql": "http://www.opengis.net/ont/geosparql#",
+    "locn": "http://www.w3.org/ns/locn#",
+    "org": "http://www.w3.org/ns/org#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "sosa": "http://www.w3.org/ns/sosa/",
+    "unit": "http://qudt.org/vocab/unit/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+
+  "boundingBox": {
+    "$comment": "Flanders and its border region. Every generated geometry falls inside it, which makes the geospatial fragmentation meaningful and gives the quality checks something to assert.",
+    "minLongitude": 2.5,
+    "maxLongitude": 6.4,
+    "minLatitude": 49.4,
+    "maxLatitude": 51.55
+  },
+
+  "timestampPath": "http://purl.org/dc/terms/created",
+  "versionOfPath": "http://purl.org/dc/terms/isVersionOf",
+  "geometryPath": "http://www.opengis.net/ont/geosparql#asWKT",
+
+  "$typesComment": [
+    "Logical column type -> Turtle literal, SPARQL projection and PostgreSQL column type.",
+    "",
+    "Ldio:LdioRdbOut hands whatever its ValueConverter returns straight to PreparedStatement.",
+    "setObject, so the RDF datatype decides whether a row can be written at all. Only a handful",
+    "of datatypes are safe:",
+    "  - xsd:dateTime with a Z offset  -> OffsetDateTime -> timestamptz",
+    "  - xsd:double                    -> Double         -> double precision",
+    "  - xsd:int                       -> Integer        -> integer",
+    "  - plain literals and IRIs       -> String         -> text",
+    "Everything else (xsd:integer -> BigInteger, xsd:date -> XSDDateTime, and geosparql:",
+    "wktLiteral -> an unregistered TypedValue) cannot be bound by the PostgreSQL driver, which",
+    "is why `project` forces those columns through SPARQL STR()."
+  ],
+
+  "types": {
+    "iri": { "sql": "text", "project": "str" },
+    "string": { "sql": "text", "project": "str" },
+    "date": { "sql": "text", "project": "str" },
+    "wktPoint": { "sql": "text", "project": "str" },
+    "dateTime": { "sql": "timestamptz", "project": "raw" },
+    "double": { "sql": "double precision", "project": "raw" },
+    "integer": { "sql": "integer", "project": "raw" }
+  },
+
+  "streams": [
+    {
+      "name": "water-sensors",
+      "title": "Water quality sensors",
+      "description": "Registry of in-situ water quality sensors. Simple, flat sensor descriptions with a point geometry.",
+      "complexity": "simple",
+      "geospatial": true,
+      "identifierPath": "water-sensor",
+      "memberType": "http://www.w3.org/ns/sosa/Sensor",
+      "seed": { "members": 40, "versioned": true },
+      "loadtest": { "members": 900, "membersPerSecond": 5 },
+      "replicationView": "by-page",
+
+      "views": [
+        { "name": "by-page", "kind": "paged", "pageSize": 250 },
+        { "name": "by-location", "kind": "geospatial", "pageSize": 100, "maxZoom": 10 }
+      ],
+
+      "sink": {
+        "table": "water_sensors",
+        "columns": [
+          { "name": "version_id", "role": "version", "type": "iri" },
+          { "name": "member_id", "role": "member", "type": "iri", "pattern": "^https://openldes[.]org/id/water-sensor/WS-[0-9]{4}$" },
+          { "name": "created_at", "role": "timestamp", "type": "dateTime" },
+          { "name": "label", "path": ["rdfs:label"], "type": "string", "minLength": 8 },
+          { "name": "observed_property", "path": ["sosa:observes"], "type": "iri", "pattern": "^https://openldes[.]org/id/observable-property/" },
+          { "name": "serial_number", "path": ["env:serialNumber"], "type": "string", "pattern": "^WS-[0-9]{4}-[0-9]{3}$" },
+          { "name": "operational_status", "path": ["env:operationalStatus"], "type": "string", "enum": ["operational", "maintenance", "fault", "calibration"] },
+          { "name": "installation_depth_m", "path": ["env:installationDepth"], "type": "double", "minimum": 0, "maximum": 50 },
+          { "name": "geometry", "path": ["geosparql:asWKT"], "type": "wktPoint" }
+        ]
+      }
+    },
+
+    {
+      "name": "air-quality-observations",
+      "title": "Air quality observations",
+      "description": "Pollutant concentrations measured at air quality stations. Simple observations with a point geometry.",
+      "complexity": "simple",
+      "geospatial": true,
+      "identifierPath": "air-quality-observation",
+      "memberType": "http://www.w3.org/ns/sosa/Observation",
+      "seed": { "members": 60, "versioned": false },
+      "loadtest": { "members": 2700, "membersPerSecond": 15 },
+      "replicationView": "by-page",
+
+      "views": [
+        { "name": "by-page", "kind": "paged", "pageSize": 250 },
+        { "name": "by-location", "kind": "geospatial", "pageSize": 100, "maxZoom": 10 },
+        { "name": "by-hour", "kind": "timebased", "pageSize": 100, "maxGranularity": "hour" },
+        { "name": "by-day", "kind": "timebased", "pageSize": 500, "maxGranularity": "day" }
+      ],
+
+      "sink": {
+        "table": "air_quality_observations",
+        "columns": [
+          { "name": "version_id", "role": "version", "type": "iri" },
+          { "name": "member_id", "role": "member", "type": "iri", "pattern": "^https://openldes[.]org/id/air-quality-observation/" },
+          { "name": "created_at", "role": "timestamp", "type": "dateTime" },
+          { "name": "pollutant", "path": ["sosa:observedProperty"], "type": "iri", "enum": [
+            "https://openldes.org/id/pollutant/no2",
+            "https://openldes.org/id/pollutant/pm10",
+            "https://openldes.org/id/pollutant/pm25",
+            "https://openldes.org/id/pollutant/o3",
+            "https://openldes.org/id/pollutant/so2"
+          ] },
+          { "name": "result_value", "path": ["sosa:hasSimpleResult"], "type": "double", "minimum": 0, "maximum": 1000 },
+          { "name": "unit", "path": ["env:unit"], "type": "iri", "enum": ["http://qudt.org/vocab/unit/MicroGM-PER-M3"] },
+          { "name": "result_time", "path": ["sosa:resultTime"], "type": "dateTime" },
+          { "name": "station_code", "path": ["env:stationCode"], "type": "string", "pattern": "^BE[A-Z]{2}[0-9]{3}$" },
+          { "name": "air_quality_index", "path": ["env:airQualityIndex"], "type": "integer", "minimum": 1, "maximum": 10 },
+          { "name": "geometry", "path": ["geosparql:asWKT"], "type": "wktPoint" }
+        ]
+      }
+    },
+
+    {
+      "name": "water-level-measurements",
+      "title": "Water level measurements",
+      "description": "Gauge readings of water levels. The simplest stream: flat literals, no geometry, no references.",
+      "complexity": "simple",
+      "geospatial": false,
+      "identifierPath": "water-level-measurement",
+      "memberType": "http://www.w3.org/ns/sosa/Observation",
+      "seed": { "members": 60, "versioned": false },
+      "loadtest": { "members": 1800, "membersPerSecond": 10 },
+      "replicationView": "by-page",
+
+      "views": [
+        { "name": "by-page", "kind": "paged", "pageSize": 250 }
+      ],
+
+      "sink": {
+        "table": "water_level_measurements",
+        "columns": [
+          { "name": "version_id", "role": "version", "type": "iri" },
+          { "name": "member_id", "role": "member", "type": "iri", "pattern": "^https://openldes[.]org/id/water-level-measurement/" },
+          { "name": "created_at", "role": "timestamp", "type": "dateTime" },
+          { "name": "gauge_code", "path": ["env:gaugeCode"], "type": "string", "pattern": "^GAU-[0-9]{4}$" },
+          { "name": "result_value", "path": ["sosa:hasSimpleResult"], "type": "double", "minimum": -5, "maximum": 25 },
+          { "name": "unit", "path": ["env:unit"], "type": "iri", "enum": ["http://qudt.org/vocab/unit/M"] },
+          { "name": "result_time", "path": ["sosa:resultTime"], "type": "dateTime" },
+          { "name": "trend", "path": ["env:trend"], "type": "string", "enum": ["rising", "falling", "stable"] },
+          { "name": "quality_flag", "path": ["env:qualityFlag"], "type": "string", "enum": ["good", "suspect", "estimated"] }
+        ]
+      }
+    },
+
+    {
+      "name": "monitoring-stations",
+      "title": "Environmental monitoring stations",
+      "description": "Stations that host water quality sensors. Complex: nested address and operator nodes, a reference to a sensor of the water-sensors stream and to a water body of the water-bodies stream.",
+      "complexity": "complex",
+      "geospatial": true,
+      "identifierPath": "monitoring-station",
+      "memberType": "https://openldes.org/ns/env#MonitoringStation",
+      "seed": { "members": 12, "versioned": true },
+      "loadtest": { "members": 540, "membersPerSecond": 3 },
+      "replicationView": "by-page",
+
+      "views": [
+        { "name": "by-page", "kind": "paged", "pageSize": 100 },
+        { "name": "by-location", "kind": "geospatial", "pageSize": 50, "maxZoom": 9 }
+      ],
+
+      "sink": {
+        "table": "monitoring_stations",
+        "columns": [
+          { "name": "version_id", "role": "version", "type": "iri" },
+          { "name": "member_id", "role": "member", "type": "iri", "pattern": "^https://openldes[.]org/id/monitoring-station/MS-[0-9]{3}$" },
+          { "name": "created_at", "role": "timestamp", "type": "dateTime" },
+          { "name": "label", "path": ["rdfs:label"], "type": "string", "minLength": 8 },
+          { "name": "primary_sensor", "path": ["env:primarySensor"], "type": "iri", "references": "water-sensors" },
+          { "name": "sensor_count", "path": ["env:sensorCount"], "type": "integer", "minimum": 1, "maximum": 8 },
+          { "name": "monitored_water_body", "path": ["env:monitors"], "type": "iri", "references": "water-bodies" },
+          { "name": "address_post_code", "path": ["locn:address", "locn:postCode"], "type": "string", "pattern": "^[0-9]{4}$" },
+          { "name": "address_post_name", "path": ["locn:address", "locn:postName"], "type": "string", "minLength": 3 },
+          { "name": "address_thoroughfare", "path": ["locn:address", "locn:thoroughfare"], "type": "string", "minLength": 3 },
+          { "name": "operator_name", "path": ["env:operator", "rdfs:label"], "type": "string", "minLength": 3 },
+          { "name": "operator_email", "path": ["env:operator", "env:contactEmail"], "type": "string", "pattern": "^[a-z0-9._-]+@[a-z0-9.-]+[.][a-z]{2,}$" },
+          { "name": "elevation_m", "path": ["env:elevation"], "type": "double", "minimum": -10, "maximum": 700 },
+          { "name": "commissioned_on", "path": ["env:commissionedAt"], "type": "date" },
+          { "name": "geometry", "path": ["geosparql:asWKT"], "type": "wktPoint" }
+        ]
+      }
+    },
+
+    {
+      "name": "water-bodies",
+      "title": "Surface water bodies",
+      "description": "Rivers, canals and estuaries with their Water Framework Directive status. Complex: nested quality assessment and catchment nodes, a reference to a station of the monitoring-stations stream and to a measurement of the water-level-measurements stream.",
+      "complexity": "complex",
+      "geospatial": true,
+      "identifierPath": "water-body",
+      "memberType": "https://openldes.org/ns/env#WaterBody",
+      "seed": { "members": 8, "versioned": true },
+      "loadtest": { "members": 360, "membersPerSecond": 2 },
+      "replicationView": "by-page",
+
+      "views": [
+        { "name": "by-page", "kind": "paged", "pageSize": 100 },
+        { "name": "by-location", "kind": "geospatial", "pageSize": 50, "maxZoom": 8 }
+      ],
+
+      "sink": {
+        "table": "water_bodies",
+        "columns": [
+          { "name": "version_id", "role": "version", "type": "iri" },
+          { "name": "member_id", "role": "member", "type": "iri", "pattern": "^https://openldes[.]org/id/water-body/WB-[0-9]{3}$" },
+          { "name": "created_at", "role": "timestamp", "type": "dateTime" },
+          { "name": "label", "path": ["rdfs:label"], "type": "string", "minLength": 4 },
+          { "name": "water_body_type", "path": ["env:waterBodyType"], "type": "string", "enum": ["river", "canal", "lake", "estuary", "reservoir"] },
+          { "name": "primary_station", "path": ["env:primaryStation"], "type": "iri", "references": "monitoring-stations" },
+          { "name": "latest_level_measurement", "path": ["env:latestLevelMeasurement"], "type": "iri", "references": "water-level-measurements" },
+          { "name": "ecological_status", "path": ["env:qualityAssessment", "env:ecologicalStatus"], "type": "string", "enum": ["high", "good", "moderate", "poor", "bad"] },
+          { "name": "chemical_status", "path": ["env:qualityAssessment", "env:chemicalStatus"], "type": "string", "enum": ["good", "failing"] },
+          { "name": "assessed_on", "path": ["env:qualityAssessment", "dcterms:date"], "type": "date" },
+          { "name": "catchment_name", "path": ["env:catchment", "rdfs:label"], "type": "string", "minLength": 4 },
+          { "name": "catchment_area_km2", "path": ["env:catchment", "env:areaKm2"], "type": "double", "minimum": 1, "maximum": 20000 },
+          { "name": "length_km", "path": ["env:lengthKm"], "type": "double", "minimum": 0.5, "maximum": 400 },
+          { "name": "geometry", "path": ["geosparql:asWKT"], "type": "wktPoint" }
+        ]
+      }
+    },
+
+    {
+      "name": "pollution-incidents",
+      "title": "Water pollution incidents",
+      "description": "Reported pollution incidents. The most complex stream: nested severity assessment and substance nodes, references into both other complex streams and into two simple streams.",
+      "complexity": "complex",
+      "geospatial": true,
+      "identifierPath": "pollution-incident",
+      "memberType": "https://openldes.org/ns/env#PollutionIncident",
+      "seed": { "members": 10, "versioned": false },
+      "loadtest": { "members": 900, "membersPerSecond": 5 },
+      "replicationView": "by-page",
+
+      "views": [
+        { "name": "by-page", "kind": "paged", "pageSize": 100 },
+        { "name": "by-location", "kind": "geospatial", "pageSize": 50, "maxZoom": 10 },
+        { "name": "by-hour", "kind": "timebased", "pageSize": 50, "maxGranularity": "hour" },
+        { "name": "by-day", "kind": "timebased", "pageSize": 250, "maxGranularity": "day" }
+      ],
+
+      "sink": {
+        "table": "pollution_incidents",
+        "columns": [
+          { "name": "version_id", "role": "version", "type": "iri" },
+          { "name": "member_id", "role": "member", "type": "iri", "pattern": "^https://openldes[.]org/id/pollution-incident/" },
+          { "name": "created_at", "role": "timestamp", "type": "dateTime" },
+          { "name": "affected_water_body", "path": ["env:affectedWaterBody"], "type": "iri", "references": "water-bodies" },
+          { "name": "reported_by_station", "path": ["env:reportedByStation"], "type": "iri", "references": "monitoring-stations" },
+          { "name": "detected_by_sensor", "path": ["env:detectedBySensor"], "type": "iri", "references": "water-sensors" },
+          { "name": "corroborating_observation", "path": ["env:corroboratingObservation"], "type": "iri", "references": "air-quality-observations" },
+          { "name": "status", "path": ["env:status"], "type": "string", "enum": ["reported", "confirmed", "contained", "resolved"] },
+          { "name": "detected_at", "path": ["env:detectedAt"], "type": "dateTime" },
+          { "name": "severity_level", "path": ["env:severityAssessment", "env:severityLevel"], "type": "string", "enum": ["minor", "moderate", "major", "severe"] },
+          { "name": "severity_confidence", "path": ["env:severityAssessment", "env:confidence"], "type": "double", "minimum": 0, "maximum": 1 },
+          { "name": "assessed_at", "path": ["env:severityAssessment", "dcterms:date"], "type": "dateTime" },
+          { "name": "substance_label", "path": ["env:substance", "rdfs:label"], "type": "string", "minLength": 3 },
+          { "name": "substance_cas", "path": ["env:substance", "env:casNumber"], "type": "string", "pattern": "^[0-9]{2,7}-[0-9]{2}-[0-9]$" },
+          { "name": "substance_concentration", "path": ["env:substance", "env:concentration"], "type": "double", "minimum": 0, "maximum": 500 },
+          { "name": "substance_unit", "path": ["env:substance", "env:unit"], "type": "iri", "enum": ["http://qudt.org/vocab/unit/MilliGM-PER-L"] },
+          { "name": "geometry", "path": ["geosparql:asWKT"], "type": "wktPoint" }
+        ]
+      }
+    }
+  ]
+}
