@@ -9,38 +9,33 @@ output "namespace" {
 }
 
 output "ldes_server_url" {
-  description = "Public base URL of the LDES server."
+  description = "Public base URL of the LDES server. The load test derives every ingest and view URL from it."
   value       = module.ldes_stack.ldes_server_url
 }
 
-output "ingest_url" {
-  description = "URL the load test posts members to."
-  value       = module.ldes_stack.ingest_url
+output "stream_names" {
+  description = "Names of the event streams under test."
+  value       = module.ldes_stack.stream_names
 }
 
-output "view_url" {
-  description = "URL of the paged view LDIO replicates from."
-  value       = module.ldes_stack.view_url
+output "streams" {
+  description = "Per stream ingest endpoint, views and sink table."
+  value       = module.ldes_stack.streams
+}
+
+output "view_urls" {
+  description = "Every view of every stream, used to wait for a fully configured LDES server."
+  value       = module.ldes_stack.view_urls
+}
+
+output "sink_tables" {
+  description = "Tables LDIO replicates the members into."
+  value       = module.ldes_stack.sink_tables
 }
 
 output "admin_url" {
   description = "Base URL of the LDES server admin API."
   value       = module.ldes_stack.admin_url
-}
-
-output "event_stream_name" {
-  description = "Name of the event stream under test."
-  value       = module.ldes_stack.event_stream_name
-}
-
-output "member_vocabulary" {
-  description = "Namespace IRI the load test must emit its member properties in."
-  value       = module.ldes_stack.member_vocabulary
-}
-
-output "sink_table_name" {
-  description = "Table LDIO replicates the members into."
-  value       = module.ldes_stack.sink_table_name
 }
 
 output "sink_database_uri" {

@@ -15,9 +15,13 @@ override.tf.json
 terraform.rc
 backend.hcl
 
-# Load test artefacts
+# Load test and verification artefacts
+loadtest/seed-summary.json
 loadtest/loadtest-summary.json
 loadtest/loadtest-summary.md
+loadtest/loadtest-metrics.json
+reports/
+report.md
 diagnostics/
 
 # Credentials

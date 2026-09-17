@@ -1,34 +1,61 @@
 #!/usr/bin/env bash
 #
-# Waits until the LDES server of a test environment serves its event stream.
+# Waits until the LDES server of a test environment serves every view of every event stream.
 #
-# The Helm release already waits for the pods to become ready, but the OVHcloud load balancer and
-# the DNS record behind the ingress hostname can lag behind by a minute or two.
+# The Helm release already waits for the pods to become ready, but two things can lag behind or
+# fail silently afterwards:
 #
-# Usage: wait-for-ldes-server.sh <url> [timeout-seconds]
+#  - the OVHcloud load balancer and the DNS record behind the ingress hostname need a minute or
+#    two;
+#  - the chart configures the streams and the views with a post-install Job that appends
+#    `|| echo "Warning: ..."` to every curl, so a rejected configuration document leaves the
+#    stream or the view missing without failing the deployment.
+#
+# Checking every view is therefore the only way to know that the environment is really configured
+# the way the catalogue describes it.
+#
+# Usage: wait-for-ldes-server.sh <timeout-seconds> <url> [url...]
 
 set -euo pipefail
 
-URL="${1:?usage: wait-for-ldes-server.sh <url> [timeout-seconds]}"
-TIMEOUT="${2:-600}"
+TIMEOUT="${1:?usage: wait-for-ldes-server.sh <timeout-seconds> <url> [url...]}"
+shift
+
+[ "$#" -gt 0 ] || { echo "No view URLs given." >&2; exit 1; }
 
 deadline=$(( $(date +%s) + TIMEOUT ))
 
-printf 'Waiting for %s (timeout %ss)\n' "$URL" "$TIMEOUT"
+printf 'Waiting for %s view(s), timeout %ss\n' "$#" "$TIMEOUT"
+
+remaining=("$@")
 
 while :; do
-    status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" || echo 000)
+    pending=()
+    last_status=""
 
-    if [ "$status" = "200" ]; then
-        printf 'LDES server is serving %s\n' "$URL"
+    for url in "${remaining[@]}"; do
+        status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo 000)
+
+        if [ "$status" = "200" ]; then
+            printf '  ready: %s\n' "$url"
+        else
+            pending+=("$url")
+            last_status="$status"
+        fi
+    done
+
+    if [ "${#pending[@]}" -eq 0 ]; then
+        printf 'The LDES server serves every view.\n'
         exit 0
     fi
 
     if [ "$(date +%s)" -ge "$deadline" ]; then
-        printf 'Timed out waiting for %s, last status %s\n' "$URL" "$status" >&2
+        printf 'Timed out. %s view(s) are still not served (last status %s):\n' "${#pending[@]}" "$last_status" >&2
+        printf '  %s\n' "${pending[@]}" >&2
         exit 1
     fi
 
-    printf '  status %s, retrying...\n' "$status"
+    printf '  %s view(s) pending, retrying...\n' "${#pending[@]}"
+    remaining=("${pending[@]}")
     sleep 10
 done
