@@ -37,6 +37,16 @@ export const SETTLE_SECONDS = intEnv('SETTLE_SECONDS', 45);
 
 export const HISTORY_DAYS = intEnv('HISTORY_DAYS', 7);
 
+/**
+ * Shifts every sequence number, and with it every generated member IRI and timestamp.
+ *
+ * A run normally owns the sequence numbers right after the seeding run, which keeps the member IRIs
+ * unique for a freshly created environment. Publishing a second time into an environment that still
+ * holds the members of an earlier run would reuse those IRIs, so such a repeat run sets this to a
+ * number beyond everything the earlier run used.
+ */
+export const SEQUENCE_OFFSET = intEnv('SEQUENCE_OFFSET', 0);
+
 export const REQUEST_TIMEOUT = __ENV.REQUEST_TIMEOUT || '60s';
 
 export function envKey(streamName) {

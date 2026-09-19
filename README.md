@@ -274,6 +274,13 @@ k6 run ldes-loadtest.js
 `seed-summary.json`, `loadtest-summary.json`, `loadtest-metrics.json` and `loadtest-summary.md`, and
 exits non-zero when a k6 threshold is breached.
 
+Every member IRI is derived from a sequence number that starts right after the seeding run, so a
+second load test against an environment that still holds the members of an earlier one would
+republish the same IRIs. `SEQUENCE_OFFSET=20000` shifts the whole range past what the earlier run
+used, which makes comparing two runs possible without re-creating the environment. The sink
+validation below still expects a freshly seeded database, so judge a repeat run by the change in
+the server's own view counts rather than by the generated report.
+
 ## Validating the PostgreSQL sink
 
 ```bash

@@ -19,6 +19,7 @@ import {
   QUERY_RATE,
   QUERY_DURATION_SECONDS,
   SETTLE_SECONDS,
+  SEQUENCE_OFFSET,
   REQUEST_TIMEOUT,
 } from './lib/config.js';
 
@@ -151,12 +152,12 @@ const runtime = buildRuntime({});
 
 const STREAM_BY_SCENARIO = {};
 const INGEST_TARGET = {};
-const SEQUENCE_OFFSET = {};
+const STREAM_SEQUENCE_START = {};
 
 for (const stream of catalog.streams) {
   STREAM_BY_SCENARIO[scenarioName(stream.name)] = stream;
   INGEST_TARGET[stream.name] = loadtestCount(stream);
-  SEQUENCE_OFFSET[stream.name] = seedCount(stream);
+  STREAM_SEQUENCE_START[stream.name] = SEQUENCE_OFFSET + seedCount(stream);
 }
 
 export function ingest() {
@@ -173,8 +174,9 @@ export function ingest() {
 
   // The seeding run owns sequence numbers 0..seedCount-1, so the load test continues after them.
   // Every sequence number is used exactly once, which makes the generated version IRIs unique
-  // without any coordination between the virtual users.
-  const sequence = SEQUENCE_OFFSET[stream.name] + iteration;
+  // without any coordination between the virtual users. SEQUENCE_OFFSET shifts the whole range for
+  // a repeat run against an environment that still holds the members of an earlier run.
+  const sequence = STREAM_SEQUENCE_START[stream.name] + iteration;
   const generated = runtime.generator.build(stream.name, sequence);
 
   const response = http.post(ingestUrl(stream.name), generated.body, {
