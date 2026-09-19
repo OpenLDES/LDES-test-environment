@@ -33,3 +33,5 @@ kubeconfig
 *.iml
 
 .README.md
+/loadtest-reports
+/derby.log

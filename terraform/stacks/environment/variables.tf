@@ -86,10 +86,22 @@ variable "ldio_chart_version" {
   default     = "0.1.1"
 }
 
+variable "ldes_server_image" {
+  description = "Image repository of the LDES server under test, e.g. \"ldes/ldes-server\" or \"openldes/ldes-server\"."
+  type        = string
+  default     = "openldes/ldes-server"
+}
+
 variable "ldes_server_image_tag" {
   description = "Image tag of the LDES server under test. The pull request workflow can override this with a candidate build."
   type        = string
-  default     = "4.0.0"
+  default     = "4.1.2"
+}
+
+variable "ldio_image" {
+  description = "Image repository of the LDI Orchestrator under test."
+  type        = string
+  default     = "openldes/ldi-orchestrator"
 }
 
 variable "ldio_image_tag" {

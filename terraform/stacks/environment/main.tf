@@ -97,11 +97,13 @@ module "ldes_stack" {
   ldio_chart_version        = var.ldio_chart_version
 
   ldes_server_image = {
-    tag = var.ldes_server_image_tag
+    repository = var.ldes_server_image
+    tag        = var.ldes_server_image_tag
   }
 
   ldio_image = {
-    tag = var.ldio_image_tag
+    repository = var.ldio_image
+    tag        = var.ldio_image_tag
   }
 
   ldes_server_resources = var.ldes_server_resources
