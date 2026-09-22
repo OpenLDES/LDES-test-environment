@@ -6,18 +6,35 @@ name: Pull request test environment
 # The environment is torn down at the end of the run. Add the `keep-environment` label to a pull
 # request to keep it around for manual inspection; pr-test-environment-cleanup.yml destroys it
 # when the pull request is closed either way.
+#
+# It can also be run manually against any branch, which deploys a standalone environment under the
+# name given as input instead of "pr-<number>". Such an environment has no pull request to be
+# closed, so pr-test-environment-cleanup.yml never picks it up: a manual run kept with
+# `keep-environment` has to be destroyed by running this workflow again without it.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      environment-name:
+        description: Name of the environment. Must be a DNS label of at most 32 characters.
+        required: true
+        default: manual
+        type: string
+      keep-environment:
+        description: Keep the environment after the run instead of destroying it.
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   pull-requests: write
 
+# Manual runs share the group with the pull request environment of the same name, so a run can
+# never overlap with the cleanup workflow or with another run touching the same Terraform state.
 concurrency:
-  group: ldes-environment-pr-${{ github.event.pull_request.number }}
+  group: ldes-environment-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.environment-name }}
   cancel-in-progress: false
 
 env:
@@ -32,7 +49,8 @@ env:
   TF_STATE_ENDPOINT: ${{ vars.TF_STATE_ENDPOINT }}
   TF_IN_AUTOMATION: 'true'
   TF_INPUT: '0'
-  ENVIRONMENT_NAME: pr-${{ github.event.pull_request.number }}
+  ENVIRONMENT_NAME: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.environment-name }}
+  COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   KUBECTL_VERSION: v1.31.2
   K6_VERSION: v0.54.0
 
@@ -41,11 +59,24 @@ jobs:
     name: Deploy and load test
     runs-on: ubuntu-latest
 
-    # Pull requests from forks cannot access the secrets needed to reach OVHcloud.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Pull requests from forks cannot access the secrets needed to reach OVHcloud. Manual runs are
+    # always on a branch of this repository, so only the pull request event needs the check.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
       - uses: actions/checkout@v4
+
+      # The environment name ends up in a Terraform state key, a namespace and a hostname. Catching
+      # a bad manual input here avoids leaving a stray state object behind for a run that can only
+      # fail on the environment_name validation of the stack later on.
+      - name: Check the environment name
+        run: |
+          set -eu
+          if ! printf '%s' "$ENVIRONMENT_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$'; then
+              echo "::error::'${ENVIRONMENT_NAME}' is not a valid environment name:" \
+                  "use a DNS label of at most 32 characters (lowercase alphanumerics and '-')." >&2
+              exit 1
+          fi
 
       - name: Install kubectl and k6
         run: |
@@ -114,7 +145,6 @@ jobs:
           LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
           CONFIGURE_STREAMS_WITH_CHART: ${{ vars.CONFIGURE_STREAMS_WITH_CHART || 'true' }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
@@ -267,13 +297,14 @@ jobs:
 
           {
             echo
-            echo "_Commit ${{ github.event.pull_request.head.sha }} — [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
+            echo "_Commit ${COMMIT_SHA} — [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
           } >> report.md
 
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment on the pull request
-        if: always()
+        # A manual run has no pull request to comment on; its report is in the job summary.
+        if: always() && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -299,7 +330,12 @@ jobs:
       - name: Destroy the environment
         # Without an initialised backend there is nothing to destroy, and terraform would only add
         # a confusing "Backend initialization required" failure on top of the real one.
-        if: always() && steps.env-init.outcome == 'success' && !contains(github.event.pull_request.labels.*.name, 'keep-environment')
+        # `inputs.keep-environment` is null outside a manual run and the label list is empty
+        # outside a pull request, so each of the two opt-outs only applies to its own event.
+        if: >-
+          always() && steps.env-init.outcome == 'success'
+          && !contains(github.event.pull_request.labels.*.name, 'keep-environment')
+          && !inputs.keep-environment
         working-directory: terraform/stacks/environment
         env:
           LDES_BASE_DOMAIN: ${{ vars.LDES_BASE_DOMAIN }}
@@ -309,7 +345,6 @@ jobs:
           LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
           CONFIGURE_STREAMS_WITH_CHART: ${{ vars.CONFIGURE_STREAMS_WITH_CHART || 'true' }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           # Re-written here as well so the teardown still works when the deploy step failed

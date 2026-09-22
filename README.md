@@ -172,8 +172,15 @@ workflow once the load balancer is up so the address lands in the state.
 7. posts the report as a pull request comment and to the job summary;
 8. destroys the environment again.
 
-Add the `keep-environment` label to a pull request to skip step 6 and inspect the environment by
+Add the `keep-environment` label to a pull request to skip step 8 and inspect the environment by
 hand. `pr-test-environment-cleanup.yml` destroys whatever is left when the pull request closes.
+
+The same workflow can be run manually against any branch. It then deploys a standalone environment
+named after the `environment-name` input (`manual` by default, anything that is a DNS label of at
+most 32 characters) rather than `pr-<number>`, and skips step 7 because there is no pull request to
+comment on. Tick `keep-environment` to skip step 8. A manual environment is never closed, so the
+cleanup workflow never picks it up: run the workflow again with the same name and without
+`keep-environment` to destroy it.
 
 ## Running a stack locally
 
@@ -261,7 +268,8 @@ needs as a typed literal — writable to a `text` column.
 cd loadtest
 
 # The realistic basis, once.
-LDES_SERVER_URL=http://pr-12.203-0-113-45.nip.io k6 run seed.js
+LDES_SERVER_URL=http://pr-12.203-0-113-45.nip.io \ 
+k6 run seed.js
 
 # The load test itself.
 LDES_SERVER_URL=http://pr-12.203-0-113-45.nip.io \
