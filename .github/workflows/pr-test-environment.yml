@@ -10,6 +10,7 @@ name: Pull request test environment
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -111,6 +112,7 @@ jobs:
           LDES_SERVER_IMAGE_TAG: ${{ vars.LDES_SERVER_IMAGE_TAG }}
           LDIO_IMAGE: ${{ vars.LDIO_IMAGE }}
           LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
+          CONFIGURE_STREAMS_WITH_CHART: ${{ vars.CONFIGURE_STREAMS_WITH_CHART || 'true' }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -305,6 +307,7 @@ jobs:
           LDES_SERVER_IMAGE_TAG: ${{ vars.LDES_SERVER_IMAGE_TAG }}
           LDIO_IMAGE: ${{ vars.LDIO_IMAGE }}
           LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
+          CONFIGURE_STREAMS_WITH_CHART: ${{ vars.CONFIGURE_STREAMS_WITH_CHART || 'true' }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
