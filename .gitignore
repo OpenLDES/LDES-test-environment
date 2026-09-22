@@ -35,3 +35,6 @@ kubeconfig
 .README.md
 /loadtest-reports
 /derby.log
+.TODO.md
+step1.md
+step2.md
