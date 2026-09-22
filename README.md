@@ -104,29 +104,31 @@ blocks; the provider picks up either pair from the environment.
 
 ### Variables
 
-| Variable                           | Example                                | Purpose                                                     |
-|------------------------------------|----------------------------------------|-------------------------------------------------------------|
-| `OVH_ENDPOINT`                     | `ovh-eu`                               | API endpoint matching your account                          |
-| `OVH_REGION`                       | `GRA9`                                 | Region of the Kubernetes cluster                            |
-| `OVH_DATABASE_REGION`              | `GRA`                                  | Region of the managed PostgreSQL cluster                    |
-| `TF_STATE_BUCKET`                  | `ldes-test-environment-github-tfstate` | Bucket holding the Terraform state                          |
-| `TF_STATE_REGION`                  | `gra`                                  | Region of that bucket                                       |
-| `TF_STATE_ENDPOINT`                | `https://s3.gra.io.cloud.ovh.net`      | S3 endpoint of that bucket                                  |
-| `LDES_BASE_DOMAIN`                 | *(unset)*                              | Optional. Domain for environment hostnames; see below       |
-| `LDES_SERVER_IMAGE_TAG`            | `4.0.0`                                | Optional. LDES server image under test                      |
-| `LDIO_IMAGE_TAG`                   | `3.1.1`                                | Optional. LDIO image under test                             |
-| `LOADTEST_MEMBER_SCALE`            | `1`                                    | Optional. Multiplies every member count; use `0.1` for a quick run   |
-| `LOADTEST_INGEST_VUS`              | `1`                                    | Optional. Publishing users per stream                       |
-| `LOADTEST_QUERY_VUS`               | `10`                                   | Optional. Users querying the views                          |
-| `LOADTEST_QUERY_RATE`              | `20`                                   | Optional. View requests per second                          |
-| `LOADTEST_QUERY_DURATION_SECONDS`  | `120`                                  | Optional. Length of the query phase                         |
-| `LOADTEST_SETTLE_SECONDS`          | `45`                                   | Optional. Pause between ingesting and querying              |
-| `LOADTEST_REPLICATION_TIMEOUT_SECONDS` | `900`                              | Optional. How long LDIO may take to catch up                |
-| `REPORT_MAX_INGEST_P95_MS`         | `2000`                                 | Optional. Fails the run when the ingest p95 is higher       |
-| `REPORT_MAX_QUERY_P95_MS`          | `3000`                                 | Optional. Fails the run when the query p95 is higher        |
-| `REPORT_MAX_VIEW_P95_MS`           | `5000`                                 | Optional. Fails the run when any single view is slower      |
-| `REPORT_MAX_REPLICATION_SECONDS`   | `600`                                  | Optional. Fails the run when LDIO lags behind for longer    |
-| `REPORT_MIN_INGEST_COMPLETION`     | `0.95`                                 | Optional. Fraction of the target members that must be ingested |
+| Variable                               | Example                                | Purpose                                                            |
+|----------------------------------------|----------------------------------------|--------------------------------------------------------------------|
+| `OVH_ENDPOINT`                         | `ovh-eu`                               | API endpoint matching your account                                 |
+| `OVH_REGION`                           | `GRA9`                                 | Region of the Kubernetes cluster                                   |
+| `OVH_DATABASE_REGION`                  | `GRA`                                  | Region of the managed PostgreSQL cluster                           |
+| `TF_STATE_BUCKET`                      | `ldes-test-environment-github-tfstate` | Bucket holding the Terraform state                                 |
+| `TF_STATE_REGION`                      | `gra`                                  | Region of that bucket                                              |
+| `TF_STATE_ENDPOINT`                    | `https://s3.gra.io.cloud.ovh.net`      | S3 endpoint of that bucket                                         |
+| `LDES_BASE_DOMAIN`                     | *(unset)*                              | Optional. Domain for environment hostnames; see below              |
+| `LDES_SERVER_IMAGE`                    | `openldes/ldes-server`                 | Optional. LDES server image repository under test                  |
+| `LDES_SERVER_IMAGE_TAG`                | `4.1.2`                                | Optional. LDES server image tag under test                         |
+| `LDIO_IMAGE`                           | `openldes/ldi-orchestrator`            | Optional. LDIO image repository under test                         |
+| `LDIO_IMAGE_TAG`                       | `3.1.1`                                | Optional. LDIO image tag under test                                |
+| `LOADTEST_MEMBER_SCALE`                | `1`                                    | Optional. Multiplies every member count; use `0.1` for a quick run |
+| `LOADTEST_INGEST_VUS`                  | `1`                                    | Optional. Publishing users per stream                              |
+| `LOADTEST_QUERY_VUS`                   | `10`                                   | Optional. Users querying the views                                 |
+| `LOADTEST_QUERY_RATE`                  | `20`                                   | Optional. View requests per second                                 |
+| `LOADTEST_QUERY_DURATION_SECONDS`      | `120`                                  | Optional. Length of the query phase                                |
+| `LOADTEST_SETTLE_SECONDS`              | `45`                                   | Optional. Pause between ingesting and querying                     |
+| `LOADTEST_REPLICATION_TIMEOUT_SECONDS` | `900`                                  | Optional. How long LDIO may take to catch up                       |
+| `REPORT_MAX_INGEST_P95_MS`             | `2000`                                 | Optional. Fails the run when the ingest p95 is higher              |
+| `REPORT_MAX_QUERY_P95_MS`              | `3000`                                 | Optional. Fails the run when the query p95 is higher               |
+| `REPORT_MAX_VIEW_P95_MS`               | `5000`                                 | Optional. Fails the run when any single view is slower             |
+| `REPORT_MAX_REPLICATION_SECONDS`       | `600`                                  | Optional. Fails the run when LDIO lags behind for longer           |
+| `REPORT_MIN_INGEST_COMPLETION`         | `0.95`                                 | Optional. Fraction of the target members that must be ingested     |
 
 Per stream volumes and rates default to the values in `catalog/streams.json` and are overridden
 with `LT_<STREAM>_MEMBERS` and `LT_<STREAM>_RATE`, for example
@@ -204,13 +206,13 @@ that validates the result, so those five can never drift apart.
 
 ### The six streams
 
-| Stream | Model | Geo | References | Views |
-|--------|-------|-----|------------|-------|
-| `water-sensors`            | simple  | yes | –                                                              | `by-page`, `by-location` |
-| `air-quality-observations` | simple  | yes | –                                                              | `by-page`, `by-location`, `by-hour`, `by-day` |
-| `water-level-measurements` | simple  | no  | –                                                              | `by-page` |
-| `monitoring-stations`      | complex | yes | `water-sensors`, `water-bodies`                                | `by-page`, `by-location` |
-| `water-bodies`             | complex | yes | `monitoring-stations`, `water-level-measurements`              | `by-page`, `by-location` |
+| Stream                     | Model   | Geo | References                                                                         | Views                                         |
+|----------------------------|---------|-----|------------------------------------------------------------------------------------|-----------------------------------------------|
+| `water-sensors`            | simple  | yes | –                                                                                  | `by-page`, `by-location`                      |
+| `air-quality-observations` | simple  | yes | –                                                                                  | `by-page`, `by-location`, `by-hour`, `by-day` |
+| `water-level-measurements` | simple  | no  | –                                                                                  | `by-page`                                     |
+| `monitoring-stations`      | complex | yes | `water-sensors`, `water-bodies`                                                    | `by-page`, `by-location`                      |
+| `water-bodies`             | complex | yes | `monitoring-stations`, `water-level-measurements`                                  | `by-page`, `by-location`                      |
 | `pollution-incidents`      | complex | yes | `water-bodies`, `monitoring-stations`, `water-sensors`, `air-quality-observations` | `by-page`, `by-location`, `by-hour`, `by-day` |
 
 The complex models use SOSA/SSN, GeoSPARQL, `locn:` and `org:` and nest blank nodes for addresses,
@@ -218,8 +220,8 @@ operators, quality assessments, catchments, severity assessments and substances.
 the other complex streams and the simple streams, which is what makes the referential integrity
 checks on the PostgreSQL side meaningful.
 
-Every stream with a geometry also has a `by-location` view
-(`tree:GeospatialFragmentation` on `geosparql:asWKT`). Two streams carry two time based views with a
+Every stream with a geometry also has a `by-location` view (`tree:GeospatialFragmentation` on
+`geosparql:asWKT`). Two streams carry two time based views with a
 different granularity (`tree:HierarchicalTimeBasedFragmentation` on `dcterms:created`, `hour` and
 `day`), and every stream has a `by-page` view, which is the one LDIO replicates from.
 
@@ -272,6 +274,13 @@ k6 run ldes-loadtest.js
 `seed-summary.json`, `loadtest-summary.json`, `loadtest-metrics.json` and `loadtest-summary.md`, and
 exits non-zero when a k6 threshold is breached.
 
+Every member IRI is derived from a sequence number that starts right after the seeding run, so a
+second load test against an environment that still holds the members of an earlier one would
+republish the same IRIs. `SEQUENCE_OFFSET=20000` shifts the whole range past what the earlier run
+used, which makes comparing two runs possible without re-creating the environment. The sink
+validation below still expects a freshly seeded database, so judge a repeat run by the change in
+the server's own view counts rather than by the generated report.
+
 ## Validating the PostgreSQL sink
 
 ```bash
@@ -315,7 +324,8 @@ exits non-zero on a data quality issue, on incomplete replication, or on a breac
   the `public` schema of an existing database, so the LDES server would not be able to create its
   own tables. Isolation between environments comes from the separate databases.
 - **Sink tables.** `Ldio:LdioRdbOut` requires its target table to exist. The `ldes-stack` module
-  therefore runs a bootstrap Job that applies the generated DDL before the LDIO release is installed.
+  therefore runs a bootstrap Job that applies the generated DDL before the LDIO release is
+  installed.
 - **In-memory LDES client state.** The six LDIO pipelines run with `state: memory`. The SQL backed
   state of the LDES client stores its work queue and its exactly-once filter in fixed table names
   (`member`, `member_id`, `member_hashed`, `treenode`) without a pipeline discriminator, and offers

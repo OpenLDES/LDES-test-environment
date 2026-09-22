@@ -54,7 +54,9 @@ jobs:
         working-directory: terraform/stacks/environment
         env:
           LDES_BASE_DOMAIN: ${{ vars.LDES_BASE_DOMAIN }}
+          LDES_SERVER_IMAGE: ${{ vars.LDES_SERVER_IMAGE }}
           LDES_SERVER_IMAGE_TAG: ${{ vars.LDES_SERVER_IMAGE_TAG }}
+          LDIO_IMAGE: ${{ vars.LDIO_IMAGE }}
           LDIO_IMAGE_TAG: ${{ vars.LDIO_IMAGE_TAG }}
         run: |
           set -euo pipefail
