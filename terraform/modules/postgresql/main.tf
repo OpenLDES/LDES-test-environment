@@ -41,14 +41,16 @@ resource "ovh_cloud_project_database" "this" {
   }
 }
 
-# Managing "avnadmin" does not create a new user: OVHcloud maps it onto the built-in superuser
-# and resets its password, which is the only supported way to obtain credentials for it.
+# Managing "avnadmin" does not create a new user: OVHcloud maps it onto the built-in superuser.
+# The API only returns a password in the response of a create or a credentials reset, and the
+# adoption path performs neither, so `password_reset` is what makes the password observable at all.
 resource "ovh_cloud_project_database_postgresql_user" "admin" {
   count = var.manage_admin_user ? 1 : 0
 
-  service_name = var.service_name
-  cluster_id   = ovh_cloud_project_database.this.id
-  name         = "avnadmin"
+  service_name   = var.service_name
+  cluster_id     = ovh_cloud_project_database.this.id
+  name           = "avnadmin"
+  password_reset = var.admin_password_reset
 }
 
 locals {

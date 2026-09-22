@@ -58,22 +58,20 @@ variable "use_managed_database" {
   default = true
 }
 
-variable "event_stream_name" {
-  description = "Name of the event stream created on the LDES server."
+variable "streams_catalog_file" {
+  description = "Path to the stream catalogue. Defaults to catalog/streams.json in the repository root."
   type        = string
-  default     = "loadtest"
+  default     = null
 }
 
-variable "view_name" {
-  description = "Name of the paged view LDIO replicates from."
-  type        = string
-  default     = "by-page"
-}
+variable "ldes_client_state" {
+  description = <<-EOT
+    Persistence strategy of the LDES client inside LDIO. Only `memory` supports more than one
+    pipeline, because the SQL backed state uses fixed table names without a pipeline discriminator.
+  EOT
 
-variable "view_page_size" {
-  description = "Number of members per fragment in the paged view."
-  type        = number
-  default     = 250
+  type    = string
+  default = "memory"
 }
 
 variable "ldes_server_chart_version" {

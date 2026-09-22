@@ -1,38 +1,42 @@
 locals {
   ldes_client_source_url = coalesce(var.ldio_ldes_server_url, local.ldes_server_public_url)
 
-  default_sink_sparql_query = <<-SPARQL
-    PREFIX dcterms: <http://purl.org/dc/terms/>
-    PREFIX lt: <${var.member_vocabulary}>
-
-    SELECT ?version_id ?member_id ?created_at ?value
-    WHERE {
-        ?version_id dcterms:isVersionOf ?member_id ;
-                    dcterms:created ?created_at ;
-                    lt:value ?value .
-    }
-  SPARQL
-
-  sink_sparql_query = coalesce(var.sink_sparql_query, local.default_sink_sparql_query)
-
-  ldes_client_config = merge(
+  ldes_client_base_config = merge(
     {
-      urls            = ["${local.ldes_client_source_url}/${var.event_stream_name}/${var.view_name}"]
       "source-format" = "text/turtle"
       state           = var.ldes_client_state
     },
     # keep-state is not applicable to the in-memory state.
     var.ldes_client_state == "memory" ? {} : { "keep-state" = true },
+
+    # The LDES client keeps its own replication state and reads its connection details from these
+    # properties only; unlike Ldio:LdioRdbOut it ignores the Spring Boot datasource.
+    #
+    # Note that the SQL state of the LDES client uses fixed, undiscriminated table names, so two
+    # pipelines pointing at the same database would consume each other's members. The variable
+    # therefore only allows a SQL state when there is a single pipeline.
+    var.ldes_client_state == "postgres" ? {
+      postgres = {
+        url      = local.ldio_jdbc_url
+        username = local.ldio_database.username
+        password = local.ldio_database.password
+      }
+    } : {},
   )
 
-  default_pipelines = [
-    {
-      name        = "ldes-to-postgres"
-      description = "Replicates the ${var.event_stream_name} event stream from the LDES server into the ${var.sink_table_name} PostgreSQL table."
+  # One pipeline per event stream: an LDES client replicating the paged view of the stream, and an
+  # Ldio:LdioRdbOut writing every member into the table of that stream.
+  pipelines = [
+    for stream in local.catalog.streams : {
+      name        = "${stream.name}-to-postgres"
+      description = "Replicates the ${stream.name} event stream into the ${stream.sink.table} PostgreSQL table."
 
       input = {
-        name   = "Ldio:LdesClient"
-        config = local.ldes_client_config
+        name = "Ldio:LdesClient"
+
+        config = merge(local.ldes_client_base_config, {
+          urls = ["${local.ldes_client_source_url}/${stream.name}/${stream.replicationView}"]
+        })
       }
 
       outputs = [
@@ -40,18 +44,17 @@ locals {
           name = "Ldio:LdioRdbOut"
 
           config = {
-            "table-name"                     = var.sink_table_name
-            "sparql-select-query"            = local.sink_sparql_query
+            "table-name"                     = stream.sink.table
+            "sparql-select-query"            = local.sink_queries[stream.name]
             "ignore-duplicate-key-exception" = true
           }
         },
       ]
-    },
+    }
   ]
 
-  pipelines = var.ldio_pipelines != null ? var.ldio_pipelines : local.default_pipelines
-
   ldio_values = {
+
     replicaCount = 1
 
     fullnameOverride = var.ldio_release_name
@@ -80,8 +83,8 @@ locals {
           }
         }
 
-        # Both Ldio:LdioRdbOut and the PostgreSQL state of the LDES client read the standard
-        # Spring Boot datasource properties.
+        # Ldio:LdioRdbOut writes the members through the standard Spring Boot datasource. The LDES
+        # client state is configured separately, through the pipeline's postgres properties.
         spring = {
           datasource = {
             url      = local.ldio_jdbc_url

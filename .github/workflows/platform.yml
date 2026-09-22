@@ -134,11 +134,40 @@ jobs:
   addons:
     name: Add-ons
     needs: [mode, platform]
-    if: needs.mode.outputs.mode != 'destroy'
+
+    # `always()` is required because the platform job depends on destroy-addons, which is skipped
+    # outside destroy mode. Without it GitHub propagates that skip down the graph and this job
+    # never runs, leaving the add-ons state empty.
+    if: always() && needs.mode.result == 'success' && needs.platform.result == 'success' && needs.mode.outputs.mode != 'destroy'
+
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Initialise the platform stack
+        uses: ./.github/actions/terraform-setup
+        with:
+          stack: platform
+          state-key: platform/terraform.tfstate
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-region: ${{ vars.TF_STATE_REGION }}
+          state-endpoint: ${{ vars.TF_STATE_ENDPOINT }}
+
+      - name: Check whether the cluster exists
+        id: cluster
+        run: |
+          set -euo pipefail
+
+          # `terraform output` exits 0 with only a warning when the state is empty, so the
+          # emptiness of the cluster ID is what tells us the platform was never applied.
+          id="$(terraform -chdir=terraform/stacks/platform output -raw cluster_id 2>/dev/null || true)"
+
+          if [ -n "$id" ]; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: ./.github/actions/terraform-setup
         with:
@@ -152,9 +181,19 @@ jobs:
         run: ./scripts/write-remote-state-vars.sh terraform/stacks/addons platform
 
       - name: Plan
-        if: needs.mode.outputs.mode == 'plan'
+        if: needs.mode.outputs.mode == 'plan' && steps.cluster.outputs.exists == 'true'
         working-directory: terraform/stacks/addons
         run: terraform plan -no-color -lock-timeout=5m
+
+      # The kubernetes and helm providers are configured from the platform outputs, so there is
+      # nothing to plan against while the cluster is down. Planning anyway would only fail with
+      # "local.platform is object with no attributes", turning every pull request red for a reason
+      # that has nothing to do with the change under review.
+      - name: Explain the skipped plan
+        if: needs.mode.outputs.mode == 'plan' && steps.cluster.outputs.exists != 'true'
+        run: |
+          echo "::warning::The platform is not applied, so the add-ons stack could not be planned." \
+              "Run this workflow with workflow_dispatch in apply mode to bring the cluster back."
 
       - name: Apply
         if: needs.mode.outputs.mode == 'apply'

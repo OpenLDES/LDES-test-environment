@@ -1,19 +1,28 @@
 locals {
   namespace = coalesce(var.namespace, "ldes-${var.environment_name}")
 
+  # The stream catalogue is shared with the load test and the validation scripts, so it lives in
+  # the repository root rather than in this stack.
+  streams_catalog = jsondecode(file(coalesce(var.streams_catalog_file, "${path.module}/../../../catalog/streams.json")))
+
   # PostgreSQL identifiers do not allow dashes without quoting, so the DNS label is folded into
   # an identifier friendly form for the per-environment database names.
   database_suffix = replace(var.environment_name, "-", "_")
 
   managed_database = var.use_managed_database && try(local.platform.database_enabled, false)
 
-  load_balancer_hostname = try(local.addons.load_balancer_hostname, "")
-  load_balancer_ip       = try(local.addons.load_balancer_ip, "")
-  load_balancer_address  = local.load_balancer_hostname != "" ? local.load_balancer_hostname : local.load_balancer_ip
+  load_balancer_ip = try(local.addons.load_balancer_ip, "")
 
-  # nip.io resolves <anything>.<ip>.nip.io to <ip>, which gives every environment its own
-  # hostname without having to manage DNS records.
-  ingress_host = var.base_domain != null ? "${var.environment_name}.${var.base_domain}" : "${var.environment_name}.${local.load_balancer_address}.nip.io"
+  # nip.io resolves a name that embeds an IP address to that address, which gives every
+  # environment its own hostname without having to manage DNS records.
+  #
+  # The address must be written with dashes: nip.io scans the name for the first dotted quad it
+  # can find, so "pr-1.141.94.235.166.nip.io" resolves to 1.141.94.235 instead of 141.94.235.166
+  # because the trailing "1" of the environment name is swallowed into the address. The dashed
+  # form "pr-1.141-94-235-166.nip.io" is unambiguous.
+  nip_io_host = "${var.environment_name}.${replace(local.load_balancer_ip, ".", "-")}.nip.io"
+
+  ingress_host = var.base_domain != null ? "${var.environment_name}.${var.base_domain}" : local.nip_io_host
 
   scheme = var.tls_secret_name != null ? "https" : "http"
 
@@ -31,8 +40,10 @@ resource "terraform_data" "preconditions" {
 
   lifecycle {
     precondition {
-      condition     = var.base_domain != null || local.load_balancer_address != ""
-      error_message = "The addons stack has no load balancer address recorded yet, so no nip.io hostname can be derived. Re-run the Platform workflow once OVHcloud finished provisioning the load balancer, or set base_domain."
+      # nip.io can only encode an IPv4 address, so a load balancer that is only published under a
+      # hostname needs a real wildcard domain to give every environment a distinct hostname.
+      condition     = var.base_domain != null || local.load_balancer_ip != ""
+      error_message = "The addons stack has no load balancer IPv4 address recorded yet, so no nip.io hostname can be derived. Re-run the Platform workflow once OVHcloud finished provisioning the load balancer, or set base_domain."
     }
   }
 }
@@ -79,9 +90,8 @@ module "ldes_stack" {
 
   ldes_server_host_name = local.ldes_server_host_name
 
-  event_stream_name = var.event_stream_name
-  view_name         = var.view_name
-  view_page_size    = var.view_page_size
+  streams_catalog   = local.streams_catalog
+  ldes_client_state = var.ldes_client_state
 
   ldes_server_chart_version = var.ldes_server_chart_version
   ldio_chart_version        = var.ldio_chart_version

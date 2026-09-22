@@ -27,4 +27,6 @@ module "postgresql" {
   disk_size      = var.database_disk_size
 
   ip_restrictions = var.database_ip_restrictions
+
+  admin_password_reset = var.database_admin_password_reset
 }

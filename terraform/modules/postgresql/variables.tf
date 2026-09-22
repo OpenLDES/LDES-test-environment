@@ -111,3 +111,24 @@ variable "manage_admin_user" {
   type    = bool
   default = true
 }
+
+variable "admin_password_reset" {
+  description = <<-EOT
+    Arbitrary string that triggers a reset of the "avnadmin" password whenever it changes.
+
+    The OVHcloud provider does not create "avnadmin" but adopts the superuser the managed cluster
+    already ships with, and the API only ever returns a password in the response of a create or a
+    credentials reset. Without a reset the `password` attribute therefore stays null and the
+    `admin_password` output disappears from the state, which breaks every consumer of it.
+
+    Change the value to rotate the password; a datetime or a hash of related variables works well.
+  EOT
+
+  type    = string
+  default = "initial"
+
+  validation {
+    condition     = length(var.admin_password_reset) > 0
+    error_message = "admin_password_reset must not be empty, otherwise no password is ever returned."
+  }
+}
