@@ -13,8 +13,12 @@ import {
   loadtestRate,
   ingestSeconds,
   ingestPhaseSeconds,
+  requiredVus,
   metricName,
   INGEST_VUS,
+  INGEST_MAX_DURATION_SECONDS,
+  MEMBER_SCALE,
+  RATE_SCALE,
   QUERY_VUS,
   QUERY_RATE,
   QUERY_DURATION_SECONDS,
@@ -139,6 +143,14 @@ function buildThresholds() {
 
   for (const stream of catalog.streams) {
     thresholds[`ingest_failed_${metricName(stream.name, 'total')}`] = ['count==0'];
+
+    if (loadtestCount(stream) > 0) {
+      // Declaring a threshold on the tagged metric is what makes k6 expose the per scenario
+      // sub-metric in the summary. The expression always holds; the count is what is wanted, so
+      // that a stream whose publishing users could not keep up can be named rather than only
+      // showing up in the aggregate.
+      thresholds[`dropped_iterations{scenario:${scenarioName(stream.name)}}`] = ['count>=0'];
+    }
   }
 
   return thresholds;
@@ -158,6 +170,26 @@ for (const stream of catalog.streams) {
   STREAM_BY_SCENARIO[scenarioName(stream.name)] = stream;
   INGEST_TARGET[stream.name] = loadtestCount(stream);
   STREAM_SEQUENCE_START[stream.name] = SEQUENCE_OFFSET + seedCount(stream);
+}
+
+export function setup() {
+  // Printed once, because the resolved plan is what explains an ingested count below the target:
+  // either the stream was truncated by INGEST_MAX_DURATION_SECONDS, or its publishing users could
+  // not keep up with the rate.
+  console.log(
+    `plan: MEMBER_SCALE=${MEMBER_SCALE} RATE_SCALE=${RATE_SCALE} INGEST_VUS=${INGEST_VUS} ` +
+      `ingest phase ${INGEST_PHASE_SECONDS}s`,
+  );
+
+  for (const stream of catalog.streams) {
+    const members = loadtestCount(stream);
+    const rate = loadtestRate(stream);
+    const seconds = ingestSeconds(stream);
+    const scheduled = Math.min(members, rate * seconds);
+    const truncated = scheduled < members ? ` TRUNCATED by INGEST_MAX_DURATION_SECONDS=${INGEST_MAX_DURATION_SECONDS}` : '';
+
+    console.log(`plan: ${stream.name} ${members} members at ${rate}/s for ${seconds}s, schedules ${scheduled}${truncated}`);
+  }
 }
 
 export function ingest() {
@@ -282,13 +314,18 @@ export function handleSummary(data) {
   const streams = {};
   for (const stream of catalog.streams) {
     const key = metricName(stream.name, 'total');
+    const avgMs = value(data, `ingest_ms_${key}`, 'avg');
     streams[stream.name] = {
       target: loadtestCount(stream),
       targetRatePerSecond: loadtestRate(stream),
       ingested: value(data, `ingested_${key}`, 'count'),
       duplicates: value(data, `duplicate_${key}`, 'count'),
       failed: value(data, `ingest_failed_${key}`, 'count'),
-      avgMs: value(data, `ingest_ms_${key}`, 'avg'),
+      dropped: value(data, `dropped_iterations{scenario:${scenarioName(stream.name)}}`, 'count'),
+      // What the measured request duration says the stream would have needed to sustain its rate,
+      // so that a dropped iteration count comes with the number to raise INGEST_VUS to.
+      vusNeeded: avgMs === null ? null : requiredVus(stream, avgMs),
+      avgMs,
       p95Ms: value(data, `ingest_ms_${key}`, 'p(95)'),
       maxMs: value(data, `ingest_ms_${key}`, 'max'),
     };
@@ -383,14 +420,26 @@ function markdown(metrics) {
     `Ingested **${metrics.totals.membersIngested}** members and made **${metrics.totals.queries}** view requests in ${metrics.durationSeconds}s ` +
       `(${metrics.configuration.ingestVus} publishing user(s) per stream, ${metrics.configuration.queryVus} querying users).`,
     '',
-    '| Stream | Target | Ingested | Duplicates | Failed | avg | p95 | max |',
-    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| Stream | Target | Rate/s | Ingested | Duplicates | Failed | Dropped | avg | p95 | max |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
   ];
 
   for (const name of Object.keys(metrics.streams)) {
     const s = metrics.streams[name];
     lines.push(
-      `| \`${name}\` | ${s.target} | ${s.ingested} | ${s.duplicates} | ${s.failed} | ${ms(s.avgMs)} | ${ms(s.p95Ms)} | ${ms(s.maxMs)} |`,
+      `| \`${name}\` | ${s.target} | ${s.targetRatePerSecond} | ${s.ingested} | ${s.duplicates} | ${s.failed} | ` +
+        `${s.dropped} | ${ms(s.avgMs)} | ${ms(s.p95Ms)} | ${ms(s.maxMs)} |`,
+    );
+  }
+
+  const starved = Object.keys(metrics.streams).filter((name) => metrics.streams[name].dropped > 0);
+  if (starved.length > 0) {
+    lines.push(
+      '',
+      `${metrics.configuration.ingestVus} publishing user(s) per stream could not sustain the requested rate. ` +
+        `At the measured request duration ${starved
+          .map((name) => `\`${name}\` needs ${metrics.streams[name].vusNeeded}`)
+          .join(', ')}.`,
     );
   }
 

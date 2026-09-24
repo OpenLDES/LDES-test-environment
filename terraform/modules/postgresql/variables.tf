@@ -93,7 +93,14 @@ variable "maintenance_time" {
 variable "advanced_configuration" {
   description = "Engine specific advanced configuration key/value pairs."
   type        = map(string)
-  default     = {}
+  default     = {
+    "pg.io_combine_limit"                         = "16"
+    "pg.io_max_combine_limit"                     = "16"
+    "pg.io_max_concurrency"                       = "-1"
+    "pg.io_method"                                = "worker"
+    "pg.password_encryption"                      = "scram-sha-256"
+    "pglookout.max_failover_replication_time_lag" = "60"
+  }
 }
 
 variable "deletion_protection" {

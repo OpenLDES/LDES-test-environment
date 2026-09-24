@@ -205,8 +205,15 @@ function validateReport({ catalog, seed, loadtest, counts, checks, failures, war
     }
 
     if (loadtest.totals.droppedIterations > 0) {
+      // The per stream counts are only present for runs of the current load test script, so the
+      // aggregate stays the fallback.
+      const starved = Object.keys(loadtest.streams)
+        .filter((name) => loadtest.streams[name].dropped > 0)
+        .map((name) => `\`${name}\` (${loadtest.streams[name].dropped} dropped, needs ${loadtest.streams[name].vusNeeded} users)`);
+
       warnings.push(
-        `k6 dropped ${loadtest.totals.droppedIterations} iterations: the configured publishing users could not sustain the requested rate.`,
+        `k6 dropped ${loadtest.totals.droppedIterations} iterations: the configured publishing users could not sustain the requested rate.` +
+          (starved.length > 0 ? ` Raise INGEST_VUS for ${starved.join(', ')}.` : ''),
       );
     }
   }
