@@ -21,6 +21,20 @@ export const LDES_SERVER_URL = requireEnv('LDES_SERVER_URL');
 /** Multiplies every member count. Handy to smoke test the whole chain in a few seconds. */
 export const MEMBER_SCALE = numberEnv('MEMBER_SCALE', 1);
 
+/**
+ * Multiplies every publishing rate.
+ *
+ * Scaling the member counts on their own only makes the ingest phase longer, and it runs into
+ * INGEST_MAX_DURATION_SECONDS long before the extra members are published: at MEMBER_SCALE=20 every
+ * stream needs an hour at its catalogue rate, so the 600 second cap truncates the run to a twentieth
+ * of the target. Scaling the rates alongside the counts keeps the ingest phase the same length and
+ * makes MEMBER_SCALE a multiplier of the load rather than of the run time.
+ *
+ * Scaling down works the other way around: a smoke run should be shorter, not slower, so the rates
+ * stay at their catalogue values below scale 1. Set RATE_SCALE explicitly to decouple the two.
+ */
+export const RATE_SCALE = numberEnv('RATE_SCALE', Math.max(1, MEMBER_SCALE));
+
 export const INGEST_VUS = intEnv('INGEST_VUS', 1);
 export const INGEST_MAX_DURATION_SECONDS = intEnv('INGEST_MAX_DURATION_SECONDS', 600);
 
@@ -65,7 +79,13 @@ export function loadtestCount(stream) {
 
 export function loadtestRate(stream) {
   const key = envKey(stream.name);
-  return Math.max(1, intEnv(`LT_${key}_RATE`, stream.loadtest.membersPerSecond));
+  const configured = intEnv(`LT_${key}_RATE`, stream.loadtest.membersPerSecond);
+  return Math.max(1, Math.round(configured * RATE_SCALE));
+}
+
+/** Publishing users a stream needs to sustain its rate, given how long a request takes. */
+export function requiredVus(stream, requestMs) {
+  return Math.ceil((loadtestRate(stream) * requestMs) / 1000);
 }
 
 /** Seconds the stream needs to publish its members at the configured rate, capped. */

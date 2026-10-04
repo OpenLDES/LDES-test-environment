@@ -95,7 +95,7 @@ variable "ldes_server_image" {
 variable "ldes_server_image_tag" {
   description = "Image tag of the LDES server under test. The pull request workflow can override this with a candidate build."
   type        = string
-  default     = "4.1.2"
+  default     = "4.1.4"
 }
 
 variable "ldio_image" {

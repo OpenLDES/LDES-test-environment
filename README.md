@@ -114,10 +114,11 @@ blocks; the provider picks up either pair from the environment.
 | `TF_STATE_ENDPOINT`                    | `https://s3.gra.io.cloud.ovh.net`      | S3 endpoint of that bucket                                         |
 | `LDES_BASE_DOMAIN`                     | *(unset)*                              | Optional. Domain for environment hostnames; see below              |
 | `LDES_SERVER_IMAGE`                    | `openldes/ldes-server`                 | Optional. LDES server image repository under test                  |
-| `LDES_SERVER_IMAGE_TAG`                | `4.1.2`                                | Optional. LDES server image tag under test                         |
+| `LDES_SERVER_IMAGE_TAG`                | `4.1.4`                                | Optional. LDES server image tag under test                         |
 | `LDIO_IMAGE`                           | `openldes/ldi-orchestrator`            | Optional. LDIO image repository under test                         |
 | `LDIO_IMAGE_TAG`                       | `3.1.1`                                | Optional. LDIO image tag under test                                |
 | `LOADTEST_MEMBER_SCALE`                | `1`                                    | Optional. Multiplies every member count; use `0.1` for a quick run |
+| `LOADTEST_RATE_SCALE`                  | *(`MEMBER_SCALE`, at least 1)*         | Optional. Multiplies every publishing rate                         |
 | `LOADTEST_INGEST_VUS`                  | `1`                                    | Optional. Publishing users per stream                              |
 | `LOADTEST_QUERY_VUS`                   | `10`                                   | Optional. Users querying the views                                 |
 | `LOADTEST_QUERY_RATE`                  | `20`                                   | Optional. View requests per second                                 |
@@ -133,6 +134,23 @@ blocks; the provider picks up either pair from the environment.
 Per stream volumes and rates default to the values in `catalog/streams.json` and are overridden
 with `LT_<STREAM>_MEMBERS` and `LT_<STREAM>_RATE`, for example
 `LT_AIR_QUALITY_OBSERVATIONS_MEMBERS` and `LT_AIR_QUALITY_OBSERVATIONS_RATE`.
+
+### Scaling the load
+
+`MEMBER_SCALE` multiplies the member counts and `RATE_SCALE` the publishing rates. Scaling up
+raises both by default, which keeps the ingest phase the same length and makes the scale a
+multiplier of the load per second. Scaling the counts alone would only make the phase longer, and
+`INGEST_MAX_DURATION_SECONDS` caps that at 600 seconds: at `MEMBER_SCALE=20` a stream publishing 5
+members per second needs an hour, so the cap would truncate it to a twentieth of its target.
+
+Below scale 1 the rates stay at their catalogue values, because a smoke run should be shorter rather
+than slower. Set `RATE_SCALE` explicitly to decouple the two.
+
+A higher rate needs more publishing users: a stream sustains roughly `INGEST_VUS / request seconds`
+members per second, so 300 members per second at 90 ms per request takes 27 users. The users are
+deliberately not over-allocated, so a rate they cannot sustain shows up as dropped iterations rather
+than as a silently inflated user count. Both the load test summary and the report name the streams
+that fell behind and the number of users they needed.
 
 ### Hostnames
 
@@ -278,9 +296,10 @@ LT_AIR_QUALITY_OBSERVATIONS_MEMBERS=10000 LT_AIR_QUALITY_OBSERVATIONS_RATE=40 \
 k6 run ldes-loadtest.js
 ```
 
-`MEMBER_SCALE=0.05` shrinks every stream proportionally for a quick smoke run. The load test writes
-`seed-summary.json`, `loadtest-summary.json`, `loadtest-metrics.json` and `loadtest-summary.md`, and
-exits non-zero when a k6 threshold is breached.
+`MEMBER_SCALE=0.05` shrinks every stream proportionally for a quick smoke run, and `MEMBER_SCALE=20`
+grows it, raising the publishing rates along with it; see [Scaling the load](#scaling-the-load). The
+load test writes `seed-summary.json`, `loadtest-summary.json`, `loadtest-metrics.json` and
+`loadtest-summary.md`, and exits non-zero when a k6 threshold is breached.
 
 Every member IRI is derived from a sequence number that starts right after the seeding run, so a
 second load test against an environment that still holds the members of an earlier one would

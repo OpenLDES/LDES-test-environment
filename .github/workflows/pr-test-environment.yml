@@ -179,6 +179,7 @@ jobs:
         env:
           LDES_SERVER_URL: ${{ steps.deploy.outputs.ldes-server-url }}
           MEMBER_SCALE: ${{ vars.LOADTEST_MEMBER_SCALE || '1' }}
+          RATE_SCALE: ${{ vars.LOADTEST_RATE_SCALE || '' }}
           INGEST_VUS: ${{ vars.LOADTEST_INGEST_VUS || '1' }}
           INGEST_MAX_DURATION_SECONDS: ${{ vars.LOADTEST_INGEST_MAX_DURATION_SECONDS || '600' }}
           QUERY_VUS: ${{ vars.LOADTEST_QUERY_VUS || '10' }}
