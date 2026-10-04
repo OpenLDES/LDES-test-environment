@@ -93,7 +93,7 @@ variable "maintenance_time" {
 variable "advanced_configuration" {
   description = "Engine specific advanced configuration key/value pairs."
   type        = map(string)
-  default     = {
+  default = {
     "pg.io_combine_limit"                         = "16"
     "pg.io_max_combine_limit"                     = "16"
     "pg.io_max_concurrency"                       = "-1"
